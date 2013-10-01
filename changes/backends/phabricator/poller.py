@@ -2,17 +2,15 @@
 """
 Phabricator Poller
 """
-import requests
-
 from datetime import datetime
 from phabricator import Phabricator
+
+from changes.config import db
+from changes.models import RemoteEntity, EntityType, Change
 
 PROJECT_MAP = {
     'Server': 'server',
 }
-
-# differential.getcommitmessage
-'''"Adding new settings tabs Summary: The settings diff. Still need to finish ajax endpoints for most of the stuff. Also the gating is around merged account rather than a seperate settings gandalf. Hopefully I will work on this more this weekend. Test Plan: Try all the controls in paired and unpaired view Reviewers: jonv CC: web-reviews, Server-Reviews Differential Revision: https://tails.corp.dropbox.com/D23788"'''
 
 
 class PhabricatorPoller(object):
@@ -31,24 +29,30 @@ class PhabricatorPoller(object):
             yield results[str(num)]
 
     def _get_change_from_diff(self, diff):
-        # look for existing change first
-        matches = requests.get('/api/0/changes/', {
-            'remote_id': diff['id'],
-        })
-        if not matches:
-            return None
+        try:
+            entity = RemoteEntity.query.filter_by(
+                provider='phabricator',
+                type=EntityType.change,
+                remote_id=diff['id'],
+            )[0]
+        except IndexError:
+            return
+
+        change = Change.query.get(entity.internal_id)
+        return change
 
     def _create_change_from_diff(self, diff):
         message = self.client.differential.getcommitmessage(
-            revision_id=diff['id'])
+            revision_id=diff['id']).response
 
-        requests.post('/api/0/changes/', {
-            'remote_id': diff['id'],
-            'label': 'D{0}: {1}'.format(diff['id'], diff['title'])[:128],
-            'message': message,
-            'date_created': datetime.utcfromtimestamp(float(diff['dateCreated'])),
-            'date_modified': datetime.utcfromtimestamp(float(diff['dateModified'])),
-        })
+        change = Change(
+            label='D{0}: {1}'.format(diff['id'], diff['title'])[:128],
+            message=message,
+            date_created=datetime.utcfromtimestamp(float(diff['dateCreated'])),
+            date_modified=datetime.utcfromtimestamp(float(diff['dateModified'])),
+        )
+        db.session.add(change)
+        return change
 
     def sync_diff_list(self):
         """
@@ -62,3 +66,4 @@ class PhabricatorPoller(object):
         change = self._get_change_from_diff(diff)
         if not change:
             change = self._create_change_from_diff(diff)
+        return change

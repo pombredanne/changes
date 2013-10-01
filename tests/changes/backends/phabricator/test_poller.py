@@ -83,3 +83,62 @@ class PhabricatorPollerTest(BaseTestCase):
         assert len(args) == 1
         assert not kwargs
         assert args[0]['id'] == '23766'
+
+    def test_sync_diff(self):
+        diff = {
+            'id': '23788',
+            'phid': 'PHID-DREV-35ugwwyy63app3nyqymz',
+            'title': 'Adding new settings tabs',
+            'uri': 'https:\/\/tails.corp.dropbox.com\/D23788',
+            'dateCreated': '1380343382',
+            'dateModified': '1380584810',
+            'authorPHID': 'PHID-USER-55q6ia6onuplhq5ioklt',
+            'status': '0',
+            'statusName': 'Needs Review',
+            'branch': '2account_settings_merged',
+            'summary': 'The settings diff.  Still need to finish ajax endpoints for most of the stuff.  Also the gating is around merged account rather than a seperate settings gandalf.  Hopefully I will work on this more this weekend.',
+            'testPlan': 'Try all the controls in paired and unpaired view',
+            'lineCount': '2646',
+            'diffs': [
+                '78044',
+                '78043',
+                '77787'
+            ],
+            'commits': [],
+            'reviewers': [
+                'PHID-USER-pqsko37cjldrmpe4b27k'
+            ],
+            'ccs': [
+                'PHID-MLST-kmlvtkgc4qzzhldqprk4',
+                'PHID-MLST-abaf3dac5c78fbfcaec4'
+            ],
+            'hashes': [
+                [
+                    'hgcm',
+                    'd0140e2204fdb80c4c28d1fa4aca53d380bd7160'
+                ],
+                [
+                    'hgcm',
+                    '24e587dffe888c0e719312023616803d9b93f328'
+                ]
+            ],
+            'auxiliary': {
+                'phabricator:depends-on': [],
+                'dropbox:security-review': False,
+            }
+        }
+        message = (
+            'Adding new settings tabs\n\nSummary: The settings diff. Still need'
+            ' to finish ajax endpoints for most of the stuff. Also the gating'
+            ' is around merged account rather than a seperate settings gandalf.'
+            ' Hopefully I will work on this more this weekend.\n\n'
+            'Test Plan: Try all the controls in paired and unpaired view\n\n'
+            'Reviewers: jonv\n\n'
+            'CC: web-reviews, Server-Reviews\n\n'
+            'Differential Revision: https://tails.corp.dropbox.com/D23788'
+        )
+
+        poller = self.get_poller()
+        change = poller.sync_diff(diff)
+        assert change.label == 'D23788: Adding new settings tabs'
+        assert change.message == message
