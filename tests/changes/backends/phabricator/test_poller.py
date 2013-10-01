@@ -1,22 +1,25 @@
 from __future__ import absolute_import
 
+import json
+import httpretty
 import mock
-import os
+import os.path
 
 from exam import fixture
 from phabricator import Phabricator
+from urlparse import parse_qs
 
 from changes.config import db
 from changes.models import Repository, Project, EntityType
 from changes.backends.phabricator.poller import PhabricatorPoller
 from changes.testutils import BackendTestCase
-from changes.testutils.http import MockedHTTPConnection
 
 
 class BaseTestCase(BackendTestCase):
+    provider = 'phabricator'
     poller_cls = PhabricatorPoller
     client_options = {
-        'host': 'http://phabricator.example.com',
+        'host': 'http://phabricator.example.com/api/',
         'username': 'test',
         'certificate': 'the cert',
     }
@@ -24,32 +27,30 @@ class BaseTestCase(BackendTestCase):
     client_connection_id = 'connection id'
 
     def setUp(self):
-        from httplib import HTTPConnection
-        self.mock_request = mock.Mock(
-            spec=HTTPConnection,
-            side_effect=MockedHTTPConnection(
-                self.client_options['host'],
-                os.path.join(os.path.dirname(__file__), 'fixtures')),
-        )
-
-        self.patcher = mock.patch(
-            'httplib.HTTPConnection',
-            side_effect=self.mock_request,
-        )
-        self.patcher.start()
-        self.addCleanup(self.patcher.stop)
-
         self.repo = Repository(url='https://github.com/dropbox/changes.git')
         self.project = Project(repository=self.repo, name='test', slug='test')
 
         db.session.add(self.repo)
         db.session.add(self.project)
 
-    def make_project_entity(self, project=None):
-        return self.make_entity(EntityType.project, (project or self.project).id, 1)
+    def load_fixture(self, filename):
+        filepath = os.path.join(
+            os.path.dirname(__file__),
+            filename,
+        )
+        with open(filepath, 'rb') as fp:
+            return fp.read()
+
+    def make_project_entity(self, project, remote_id):
+        return self.make_entity(EntityType.project, project.id, remote_id)
 
     def get_poller(self):
         return self.poller_cls(self.phabricator)
+
+    def load_request_params(self, request):
+        result = json.loads(parse_qs(request.body)['params'][0])
+        del result['__conduit__']
+        return result
 
     @fixture
     def phabricator(self):
@@ -62,24 +63,45 @@ class BaseTestCase(BackendTestCase):
 
 
 class PhabricatorPollerTest(BaseTestCase):
+    @httpretty.activate
     @mock.patch.object(PhabricatorPoller, 'sync_diff')
     def test_sync_diff_list(self, sync_diff):
+        httpretty.register_uri(
+            httpretty.POST, "http://phabricator.example.com/api/differential.query",
+            body=self.load_fixture('fixtures/POST/differential.query.json'),
+            streaming=True)
+
+        self.make_project_entity(self.project, 'Server')
+
         poller = self.get_poller()
         poller.sync_diff_list()
+
+        request = httpretty.last_request()
+        assert self.load_request_params(request) == {
+            'arcanistProjects': ['Server'],
+            'limit': 100,
+        }
 
         assert len(sync_diff.mock_calls) == 2
 
         _, args, kwargs = sync_diff.mock_calls[0]
-        assert len(args) == 1
+        assert len(args) == 2
         assert not kwargs
-        assert args[0]['id'] == '23788'
+        assert args[0] == self.project
+        assert args[1]['id'] == '23788'
 
         _, args, kwargs = sync_diff.mock_calls[1]
-        assert len(args) == 1
+        assert len(args) == 2
         assert not kwargs
-        assert args[0]['id'] == '23766'
+        assert args[0] == self.project
+        assert args[1]['id'] == '23766'
 
+    @httpretty.activate
     def test_sync_diff(self):
+        httpretty.register_uri(
+            httpretty.POST, "http://phabricator.example.com/api/differential.getcommitmessage",
+            body=self.load_fixture('fixtures/POST/differential.getcommitmessage.json'))
+
         diff = {
             'id': '23788',
             'phid': 'PHID-DREV-35ugwwyy63app3nyqymz',
@@ -134,6 +156,13 @@ class PhabricatorPollerTest(BaseTestCase):
         )
 
         poller = self.get_poller()
-        change = poller.sync_diff(diff)
+
+        change = poller.sync_diff(self.project, diff)
+
+        request = httpretty.last_request()
+        assert self.load_request_params(request) == {
+            'revision_id': '23788',
+        }
+
         assert change.label == 'D23788: Adding new settings tabs'
         assert change.message == message
