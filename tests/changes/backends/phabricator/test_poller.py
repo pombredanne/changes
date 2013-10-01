@@ -3,16 +3,11 @@ from __future__ import absolute_import
 import mock
 import os
 
-from datetime import datetime
 from exam import fixture
 from phabricator import Phabricator
 
 from changes.config import db
-from changes.constants import Result, Status
-from changes.models import (
-    Repository, Project, Build, EntityType, Revision, Author,
-    Phase, Step, Patch
-)
+from changes.models import Repository, Project, EntityType
 from changes.backends.phabricator.poller import PhabricatorPoller
 from changes.testutils import BackendTestCase
 from changes.testutils.http import MockedHTTPConnection
