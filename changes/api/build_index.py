@@ -1,15 +1,14 @@
 from __future__ import absolute_import, division, unicode_literals
 
 from cStringIO import StringIO
+from datetime import datetime
 from flask import current_app as app, request
 from sqlalchemy.orm import joinedload
 
 from changes.api.base import APIView, param
 from changes.api.validators.author import AuthorValidator
-from changes.config import db
-from changes.models import (
-    Build, Project, Repository, Patch, Change
-)
+from changes.config import db, pubsub
+from changes.models import Build, Repository, Patch, Change
 
 
 class BuildIndexAPIView(APIView):
@@ -82,6 +81,7 @@ class BuildIndexAPIView(APIView):
             label = sha[:12]
 
         build = Build(
+            change=change,
             project=change.project,
             repository=repository,
             author=author,
@@ -91,8 +91,17 @@ class BuildIndexAPIView(APIView):
         )
         db.session.add(build)
 
+        change.date_modified = datetime.utcnow()
+        db.session.add(change)
+
         backend = self.get_backend()
         backend.create_build(build)
+
+        channel = 'builds:{0}:{1}'.format(change.id.hex, build.id.hex)
+        pubsub.publish(channel, {
+            'data': self.as_json(build),
+            'event': 'build.update',
+        })
 
         context = {
             'build': {
@@ -101,3 +110,6 @@ class BuildIndexAPIView(APIView):
         }
 
         return self.respond(context)
+
+    def get_stream_channels(self, change_id):
+        return ['builds:{0}:*'.format(change_id)]

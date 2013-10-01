@@ -4,7 +4,7 @@ from sqlalchemy.orm import joinedload
 
 from changes.api.base import APIView, param
 from changes.api.validators.author import AuthorValidator
-from changes.config import db
+from changes.config import db, pubsub
 from changes.models import Change, Build, Project, Repository
 
 
@@ -14,7 +14,7 @@ class ChangeIndexAPIView(APIView):
             Change.query.options(
                 joinedload(Change.project),
                 joinedload(Change.author),
-            ).order_by(Change.date_created.desc())
+            ).order_by(Change.date_modified.desc())
         )[:100]
 
         # TODO(dcramer): denormalize this
@@ -54,6 +54,12 @@ class ChangeIndexAPIView(APIView):
         )
         db.session.add(change)
 
+        channel = 'changes:{0}'.format(change.id.hex)
+        pubsub.publish(channel, {
+            'data': self.as_json(change),
+            'event': 'change.update',
+        })
+
         context = {
             'change': {
                 'id': change.id.hex,
@@ -61,3 +67,6 @@ class ChangeIndexAPIView(APIView):
         }
 
         return self.respond(context)
+
+    def get_stream_channels(self):
+        return ['changes:*']

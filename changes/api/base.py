@@ -6,6 +6,7 @@ from flask import Response, current_app as app, request
 from flask.views import MethodView
 
 from changes.api.serializer import serialize
+from changes.api.stream import EventStream
 
 
 def as_json(context):
@@ -62,6 +63,12 @@ class ParamError(APIError):
 
 class APIView(MethodView):
     def dispatch_request(self, *args, **kwargs):
+        if 'text/event-stream' in request.headers.get('Accept', ''):
+            channels = self.get_stream_channels(**kwargs)
+            if not channels:
+                return Response(status=404)
+            return self.stream_response(channels)
+
         try:
             return super(APIView, self).dispatch_request(*args, **kwargs)
         except APIError as exc:
@@ -80,3 +87,13 @@ class APIView(MethodView):
             as_json(context),
             mimetype='application/json',
             status=status_code)
+
+    def as_json(self, context):
+        return json.dumps(serialize(context))
+
+    def get_stream_channels(self, **kwargs):
+        return []
+
+    def stream_response(self, channels):
+        stream = EventStream(channels=channels)
+        return Response(stream, mimetype='text/event-stream')

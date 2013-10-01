@@ -321,7 +321,11 @@ class KoalityBackend(BaseBackend):
         build_list = []
         for change in change_list:
             build, created = self._sync_build(project, change)
-            pubsub.publish('builds', as_json(build))
+            channel = 'builds:{0}:{1}'.format(change.id.hex, build.id.hex)
+            pubsub.publish(channel, {
+                'data': as_json(build),
+                'event': 'build.update',
+            })
             build_list.append((build, created))
 
         return build_list
@@ -357,7 +361,6 @@ class KoalityBackend(BaseBackend):
         ))
 
         build, created = self._sync_build(project, change, stage_list, build=build)
-        pubsub.publish('builds', as_json(build))
 
         grouped_stages = defaultdict(list)
         for stage in stage_list:
@@ -367,10 +370,23 @@ class KoalityBackend(BaseBackend):
             stage_list.sort(key=lambda x: x['status'] == 'passed')
 
             phase = self._sync_phase(build, stage_type, stage_list)
-            pubsub.publish('phases:%s' % (build.id.hex,), as_json(phase))
 
             for stage in stage_list:
                 self._sync_step(build, phase, stage)
+
+            channel = 'phases:{0}:{1}:{2}'.format(
+                build.change_id.hex, build.id.hex, phase.id.hex)
+            pubsub.publish(channel, {
+                'data': as_json(phase),
+                'event': 'phase.update',
+            })
+
+        channel = 'builds:{0}:{1}'.format(
+            build.change_id.hex, build.id.hex)
+        pubsub.publish(channel, {
+            'data': as_json(build),
+            'event': 'build.update',
+        })
 
         return build, created
 
