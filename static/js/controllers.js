@@ -2,8 +2,7 @@ if (window.stream === undefined) {
   streams = {};
 }
 
-Stream = {};
-Stream.subscribe = function subscribe($scope, url, callback) {
+Stream = function Stream($scope, url) {
   "use strict";
 
   // TODO(dcramer): currently only supports one subscriber per channel
@@ -29,10 +28,15 @@ Stream.subscribe = function subscribe($scope, url, callback) {
   window.streams[url].onopen = function(e) {
     console.log('[Stream] Connection opened to ' + url);
   }
-  window.streams[url].onmessage = function(e) {
-    var data = $.parseJSON(e.data);
-    callback(data);
-  };
+
+  return {
+    subscribe: function(event, callback){
+      window.streams[url].addEventListener(event, function(e) {
+        var data = $.parseJSON(e.data);
+        callback(data);
+      }, false);
+    }
+  }
 };
 
 function ChangeListCtrl($scope, $http) {
@@ -48,29 +52,30 @@ function ChangeListCtrl($scope, $http) {
     return moment.utc(date).fromNow();
   };
 
-  function addChange(change) {
+  function addChange(data) {
     $scope.$apply(function() {
       var updated = false,
-          change_id = change.id,
+          change_id = data.id,
           attr, result, item;
 
       if ($scope.changes.length > 0) {
         result = $.grep($scope.changes, function(e){ return e.id == change_id; });
         if (result.length > 0) {
           item = result[0];
-          for (attr in change) {
-            item[attr] = change[attr];
+          for (attr in data) {
+            item[attr] = data[attr];
           }
           updated = true;
         }
       }
       if (!updated) {
-        $scope.changes.unshift(change);
+        $scope.changes.unshift(data);
       }
     });
   }
 
-  Stream.subscribe($scope, '/api/0/changes/', addChange);
+  var stream = Stream($scope, '/api/0/changes/');
+  stream.subscribe('change.update', addChange);
 }
 
 function ChangeDetailsCtrl($scope, $http, $routeParams) {
@@ -92,7 +97,8 @@ function ChangeDetailsCtrl($scope, $http, $routeParams) {
     });
   }
 
-  Stream.subscribe($scope, '/api/0/changes/' + $routeParams.change_id + '/', updateChange);
+  var stream = Stream($scope, '/api/0/changes/' + $routeParams.change_id + '/');
+  stream.subscribe('change.update', updateChange);
 
   // TODO(dcramer): this probably isnt the right way to do this in Angular
   new BuildListCtrl($scope, $http, $routeParams);
@@ -133,7 +139,8 @@ function BuildListCtrl($scope, $http, $routeParams) {
     });
   }
 
-  Stream.subscribe($scope, '/api/0/changes/' + $routeParams.change_id + '/builds/', addBuild);
+  var stream = Stream($scope, '/api/0/changes/' + $routeParams.change_id + '/builds/');
+  stream.subscribe('build.update', addBuild);
 }
 
 
@@ -160,5 +167,6 @@ function BuildDetailsCtrl($scope, $http, $routeParams) {
     });
   }
 
-  Stream.subscribe($scope, '/api/0/changes/' + $routeParams.change_id + '/builds/' + $routeParams.build_id + '/', updateBuild);
+  var stream = Stream($scope, '/api/0/changes/' + $routeParams.change_id + '/builds/' + $routeParams.build_id + '/');
+  stream.subscribe('build.update', updateBuild);
 }

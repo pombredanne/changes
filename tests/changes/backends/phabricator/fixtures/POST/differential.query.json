@@ -1,6 +1,6 @@
 {
-  "result": {
-    "0"  : {
+  "result": [
+    {
       "id"           : "23788",
       "phid"         : "PHID-DREV-35ugwwyy63app3nyqymz",
       "title"        : "Adding new settings tabs",
@@ -38,7 +38,7 @@
         ]
       ]
     },
-    "1"  : {
+    {
       "id"           : "23766",
       "phid"         : "PHID-DREV-skfki3if2ltfc4rfklqp",
       "title"        : "Make a taskrunner task for get started backfill and make corresponding changes to the backfill script.",
@@ -75,7 +75,7 @@
         ]
       ]
     }
-  },
+  ],
   "error_code": null,
   "error_info": null
 }

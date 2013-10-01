@@ -59,9 +59,8 @@ class PhabricatorPoller(object):
                 arcanistProjects=[arcproject],
                 limit=100,
             )
-
-            for num in xrange(len(results)):
-                yield (project, results[str(num)])
+            for result in results:
+                yield (project, result)
 
     def _get_label_from_revision(self, revision):
         return 'D{0}: {1}'.format(revision['id'], revision['title'])[:128]
@@ -154,7 +153,7 @@ class PhabricatorPoller(object):
             project=change.project,
             parent_revision_sha=diff['sourceControlBaseRevision'],
             label='Diff ID {0}: {1}'.format(
-                diff['id'], diff['description'] or 'Initial'),
+                diff['id'], diff['description'] or 'Initial')[:128],
         )
         db.session.add(build)
 

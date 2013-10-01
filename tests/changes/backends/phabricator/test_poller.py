@@ -105,7 +105,7 @@ class PhabricatorPollerTest(BaseTestCase):
 
         revision = json.loads(
             self.load_fixture('fixtures/POST/differential.query.json')
-        )['result']['0']
+        )['result'][0]
         message = json.loads(
             self.load_fixture('fixtures/POST/differential.getcommitmessage.json')
         )['result']
