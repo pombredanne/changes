@@ -4,7 +4,7 @@
       "id"           : "23788",
       "phid"         : "PHID-DREV-35ugwwyy63app3nyqymz",
       "title"        : "Adding new settings tabs",
-      "uri"          : "https:\/\/tails.corp.dropbox.com\/D23788",
+      "uri"          : "https:\/\/phabricator.example.com\/D23788",
       "dateCreated"  : "1380343382",
       "dateModified" : "1380584810",
       "authorPHID"   : "PHID-USER-55q6ia6onuplhq5ioklt",
@@ -36,17 +36,13 @@
           "hgcm",
           "24e587dffe888c0e719312023616803d9b93f328"
         ]
-      ],
-      "auxiliary"    : {
-        "phabricator:depends-on"  : [],
-        "dropbox:security-review" : false
-      }
+      ]
     },
     "1"  : {
       "id"           : "23766",
       "phid"         : "PHID-DREV-skfki3if2ltfc4rfklqp",
       "title"        : "Make a taskrunner task for get started backfill and make corresponding changes to the backfill script.",
-      "uri"          : "https:\/\/tails.corp.dropbox.com\/D23766",
+      "uri"          : "https:\/\/phabricator.example.com\/D23766",
       "dateCreated"  : "1380320177",
       "dateModified" : "1380584431",
       "authorPHID"   : "PHID-USER-ev2ecay4iywhvdwhhx2g",
@@ -77,11 +73,7 @@
           "hgcm",
           "c0bb118ab1a13efd4d2064d161034f4315aaf24a"
         ]
-      ],
-      "auxiliary"    : {
-        "phabricator:depends-on"  : [],
-        "dropbox:security-review" : false
-      }
+      ]
     }
   },
   "error_code": null,

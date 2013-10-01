@@ -64,17 +64,17 @@ class BaseTestCase(BackendTestCase):
 
 class PhabricatorPollerTest(BaseTestCase):
     @httpretty.activate
-    @mock.patch.object(PhabricatorPoller, 'sync_diff')
-    def test_sync_diff_list(self, sync_diff):
+    @mock.patch.object(PhabricatorPoller, 'sync_revision')
+    def test_sync_revision_list(self, sync_revision):
         httpretty.register_uri(
-            httpretty.POST, "http://phabricator.example.com/api/differential.query",
+            httpretty.POST, 'http://phabricator.example.com/api/differential.query',
             body=self.load_fixture('fixtures/POST/differential.query.json'),
             streaming=True)
 
         self.make_project_entity(self.project, 'Server')
 
         poller = self.get_poller()
-        poller.sync_diff_list()
+        poller.sync_revision_list()
 
         request = httpretty.last_request()
         assert self.load_request_params(request) == {
@@ -82,82 +82,37 @@ class PhabricatorPollerTest(BaseTestCase):
             'limit': 100,
         }
 
-        assert len(sync_diff.mock_calls) == 2
+        assert len(sync_revision.mock_calls) == 2
 
-        _, args, kwargs = sync_diff.mock_calls[0]
+        _, args, kwargs = sync_revision.mock_calls[0]
         assert len(args) == 2
         assert not kwargs
         assert args[0] == self.project
         assert args[1]['id'] == '23788'
 
-        _, args, kwargs = sync_diff.mock_calls[1]
+        _, args, kwargs = sync_revision.mock_calls[1]
         assert len(args) == 2
         assert not kwargs
         assert args[0] == self.project
         assert args[1]['id'] == '23766'
 
     @httpretty.activate
-    def test_sync_diff(self):
+    @mock.patch.object(PhabricatorPoller, 'sync_diff_list')
+    def test_sync_revision(self, sync_diff_list):
         httpretty.register_uri(
-            httpretty.POST, "http://phabricator.example.com/api/differential.getcommitmessage",
+            httpretty.POST, 'http://phabricator.example.com/api/differential.getcommitmessage',
             body=self.load_fixture('fixtures/POST/differential.getcommitmessage.json'))
 
-        diff = {
-            'id': '23788',
-            'phid': 'PHID-DREV-35ugwwyy63app3nyqymz',
-            'title': 'Adding new settings tabs',
-            'uri': 'https:\/\/tails.corp.dropbox.com\/D23788',
-            'dateCreated': '1380343382',
-            'dateModified': '1380584810',
-            'authorPHID': 'PHID-USER-55q6ia6onuplhq5ioklt',
-            'status': '0',
-            'statusName': 'Needs Review',
-            'branch': '2account_settings_merged',
-            'summary': 'The settings diff.  Still need to finish ajax endpoints for most of the stuff.  Also the gating is around merged account rather than a seperate settings gandalf.  Hopefully I will work on this more this weekend.',
-            'testPlan': 'Try all the controls in paired and unpaired view',
-            'lineCount': '2646',
-            'diffs': [
-                '78044',
-                '78043',
-                '77787'
-            ],
-            'commits': [],
-            'reviewers': [
-                'PHID-USER-pqsko37cjldrmpe4b27k'
-            ],
-            'ccs': [
-                'PHID-MLST-kmlvtkgc4qzzhldqprk4',
-                'PHID-MLST-abaf3dac5c78fbfcaec4'
-            ],
-            'hashes': [
-                [
-                    'hgcm',
-                    'd0140e2204fdb80c4c28d1fa4aca53d380bd7160'
-                ],
-                [
-                    'hgcm',
-                    '24e587dffe888c0e719312023616803d9b93f328'
-                ]
-            ],
-            'auxiliary': {
-                'phabricator:depends-on': [],
-                'dropbox:security-review': False,
-            }
-        }
-        message = (
-            'Adding new settings tabs\n\nSummary: The settings diff. Still need'
-            ' to finish ajax endpoints for most of the stuff. Also the gating'
-            ' is around merged account rather than a seperate settings gandalf.'
-            ' Hopefully I will work on this more this weekend.\n\n'
-            'Test Plan: Try all the controls in paired and unpaired view\n\n'
-            'Reviewers: jonv\n\n'
-            'CC: web-reviews, Server-Reviews\n\n'
-            'Differential Revision: https://tails.corp.dropbox.com/D23788'
-        )
+        revision = json.loads(
+            self.load_fixture('fixtures/POST/differential.query.json')
+        )['result']['0']
+        message = json.loads(
+            self.load_fixture('fixtures/POST/differential.getcommitmessage.json')
+        )['result']
 
         poller = self.get_poller()
 
-        change = poller.sync_diff(self.project, diff)
+        change = poller.sync_revision(self.project, revision)
 
         request = httpretty.last_request()
         assert self.load_request_params(request) == {
@@ -166,3 +121,51 @@ class PhabricatorPollerTest(BaseTestCase):
 
         assert change.label == 'D23788: Adding new settings tabs'
         assert change.message == message
+
+        sync_diff_list.assert_called_once_with(change, revision['id'])
+
+    @httpretty.activate
+    @mock.patch.object(PhabricatorPoller, 'sync_diff')
+    def test_sync_diff_list(self, sync_diff):
+        httpretty.register_uri(
+            httpretty.POST, 'http://phabricator.example.com/api/differential.querydiffs',
+            body=self.load_fixture('fixtures/POST/differential.querydiffs.json'))
+
+        change = self.create_change(self.project)
+
+        poller = self.get_poller()
+        poller.sync_diff_list(change, '23788')
+
+        request = httpretty.last_request()
+        assert self.load_request_params(request) == {
+            'revisionIDs': ['23788'],
+        }
+
+        assert len(sync_diff.mock_calls) == 2
+
+        _, args, kwargs = sync_diff.mock_calls[0]
+        assert len(args) == 2
+        assert not kwargs
+        assert args[0] == change
+        assert args[1]['id'] == '16161'
+
+        _, args, kwargs = sync_diff.mock_calls[1]
+        assert len(args) == 2
+        assert not kwargs
+        assert args[0] == change
+        assert args[1]['id'] == '16163'
+
+    @httpretty.activate
+    def test_sync_diff(self):
+        diff = json.loads(
+            self.load_fixture('fixtures/POST/differential.querydiffs.json')
+        )['result']['16161']
+
+        change = self.create_change(self.project)
+
+        poller = self.get_poller()
+        build = poller.sync_diff(change, diff)
+
+        assert build.label == 'Diff ID 16161: Initial'
+        assert build.change == change
+        assert build.parent_revision_sha == 'ca7a7927948babe35652a9ea58f94e470ae9e51f'
