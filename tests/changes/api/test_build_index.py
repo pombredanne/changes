@@ -43,6 +43,7 @@ class BuildCreateTest(APITestCase):
         build = Build.query.get(data['build']['id'])
         assert build.change == change
         assert build.project == self.project
+        assert build.repository == self.project.repository
         assert build.parent_revision_sha == 'a' * 40
         assert build.author.name == 'David Cramer'
         assert build.author.email == 'dcramer@example.com'
@@ -67,6 +68,9 @@ class BuildCreateTest(APITestCase):
             build)
         assert build.patch_id is not None
         patch = Patch.query.get(build.patch_id)
+        assert patch.change == change
+        assert patch.project == self.project
+        assert patch.repository == self.project.repository
         assert patch.diff == SAMPLE_DIFF
         assert patch.label == 'D1234'
         assert patch.url == 'http://phabricator.example.com/D1234'

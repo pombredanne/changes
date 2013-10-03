@@ -50,14 +50,14 @@ class PhabricatorPoller(object):
             self._project_to_arcproject[project] = name
         return self._arcproject_to_project[name]
 
-    def _yield_revisions(self):
+    def yield_revisions(self):
         # the API response does not include the arcanist project, so we
         # must query each individually
         for project in self._project_cache.itervalues():
             arcproject = self._project_id_to_arcproject[project.id]
             results = self.client.differential.query(
                 arcanistProjects=[arcproject],
-                limit=100,
+                limit=5,
             )
             for result in results:
                 yield (project, result)
@@ -75,7 +75,7 @@ class PhabricatorPoller(object):
         except IndexError:
             return
 
-        return entity.type.query.get(entity.internal_id)
+        return entity.fetch_instance()
 
     def _create_change_from_revision(self, project, revision):
         change = Change(
@@ -102,13 +102,18 @@ class PhabricatorPoller(object):
         missing (via the API).
         """
         self._populate_project_cache()
-        for project, revision in self._yield_revisions():
-            self.sync_revision(project, revision)
+        results = []
+        for project, revision in self.yield_revisions():
+            results.append(self.sync_revision(project, revision))
+        return results
 
     def sync_revision(self, project, revision):
         change = self._get_change_from_revision(project, revision)
         if not change:
             change = self._create_change_from_revision(project, revision)
+            created = True
+        else:
+            created = False
 
         message = self.client.differential.getcommitmessage(
             revision_id=revision['id']).response
@@ -120,11 +125,9 @@ class PhabricatorPoller(object):
 
         db.session.add(change)
 
-        self.sync_diff_list(change, revision['id'])
+        return change, created
 
-        return change
-
-    def _yield_diffs(self, revision_id):
+    def yield_diffs(self, revision_id):
         # the API response does not include the arcanist project, so we
         # must query each individually
         results = self.client.differential.querydiffs(
@@ -144,16 +147,20 @@ class PhabricatorPoller(object):
         except IndexError:
             return
 
-        return entity.type.query.get(entity.internal_id)
+        return entity.fetch_instance()
 
     def _create_patch_from_diff(self, change, diff):
+        raw_diff = self.client.differential.getrawdiff(
+            diffID=diff['id']).response
+
         patch = Patch(
             change=change,
             repository=change.repository,
             project=change.project,
             parent_revision_sha=diff['sourceControlBaseRevision'],
             label='Diff ID {0}: {1}'.format(
-                diff['id'], diff['description'] or 'Initial')[:128],
+                diff['id'], diff['description'] or 'Initial')[:64],
+            diff=raw_diff,
         )
         db.session.add(patch)
 
@@ -167,14 +174,26 @@ class PhabricatorPoller(object):
 
         return patch
 
-    def sync_diff_list(self, change, revision_id):
-        for diff in self._yield_diffs(revision_id):
-            self.sync_diff(change, diff)
+    def sync_diff_list(self, change, revision_id=None):
+        if revision_id is None:
+            revision_id = RemoteEntity.query.filter_by(
+                type=EntityType.change,
+                internal_id=change.id,
+                provider=self.provider
+            )[0].remote_id
+
+        results = []
+        for diff in self.yield_diffs(revision_id):
+            results.append(self.sync_diff(change, diff))
+        return results
 
     def sync_diff(self, change, diff):
         patch = self._get_patch_from_diff(change, diff)
         if not patch:
             patch = self._create_patch_from_diff(change, diff)
+            created = True
+        else:
+            created = False
         db.session.add(patch)
 
-        return patch
+        return patch, created

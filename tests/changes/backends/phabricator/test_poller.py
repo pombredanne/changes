@@ -97,8 +97,7 @@ class PhabricatorPollerTest(BaseTestCase):
         assert args[1]['id'] == '23766'
 
     @httpretty.activate
-    @mock.patch.object(PhabricatorPoller, 'sync_diff_list')
-    def test_sync_revision(self, sync_diff_list):
+    def test_sync_revision(self):
         httpretty.register_uri(
             httpretty.POST, 'http://phabricator.example.com/api/differential.getcommitmessage',
             body=self.load_fixture('fixtures/POST/differential.getcommitmessage.json'))
@@ -112,7 +111,8 @@ class PhabricatorPollerTest(BaseTestCase):
 
         poller = self.get_poller()
 
-        change = poller.sync_revision(self.project, revision)
+        change, created = poller.sync_revision(self.project, revision)
+        assert created is True
 
         request = httpretty.last_request()
         assert self.load_request_params(request) == {
@@ -121,8 +121,6 @@ class PhabricatorPollerTest(BaseTestCase):
 
         assert change.label == 'D23788: Adding new settings tabs'
         assert change.message == message
-
-        sync_diff_list.assert_called_once_with(change, revision['id'])
 
     @httpretty.activate
     @mock.patch.object(PhabricatorPoller, 'sync_diff')
@@ -164,8 +162,9 @@ class PhabricatorPollerTest(BaseTestCase):
         change = self.create_change(self.project)
 
         poller = self.get_poller()
-        build = poller.sync_diff(change, diff)
+        build, created = poller.sync_diff(change, diff)
 
+        assert created is True
         assert build.label == 'Diff ID 16161: Initial'
         assert build.change == change
         assert build.parent_revision_sha == 'ca7a7927948babe35652a9ea58f94e470ae9e51f'
