@@ -79,7 +79,7 @@ class PhabricatorPollerTest(BaseTestCase):
         request = httpretty.last_request()
         assert self.load_request_params(request) == {
             'arcanistProjects': ['Server'],
-            'limit': 100,
+            'limit': 25,
         }
 
         assert len(sync_revision.mock_calls) == 2
@@ -155,6 +155,10 @@ class PhabricatorPollerTest(BaseTestCase):
 
     @httpretty.activate
     def test_sync_diff(self):
+        httpretty.register_uri(
+            httpretty.POST, 'http://phabricator.example.com/api/differential.getrawdiff',
+            body=self.load_fixture('fixtures/POST/differential.getrawdiff.json'))
+
         diff = json.loads(
             self.load_fixture('fixtures/POST/differential.querydiffs.json')
         )['result']['16161']

@@ -16,6 +16,7 @@ def poller():
     from changes.backends.koality.backend import KoalityBackend
     from changes.backends.phabricator.poller import PhabricatorPoller
     from changes.config import create_app, db
+    from changes.jobs.sync_build import sync_build
     from changes.models import Build
     from phabricator import Phabricator
 
@@ -79,6 +80,7 @@ def poller():
     while True:
         for project, revision in poller.yield_revisions():
             change, created = poller.sync_revision(project, revision)
+            db.session.commit()
             for patch, created in poller.sync_diff_list(change):
                 if created:
                     # fire off a build
@@ -93,5 +95,8 @@ def poller():
                     )
                     db.session.add(build)
                     backend.create_build(build, project)
-            db.session.commit()
+                    db.session.commit()
+                    sync_build.delay(
+                        build_id=build.id,
+                    )
         time.sleep(5)

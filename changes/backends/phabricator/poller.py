@@ -57,7 +57,7 @@ class PhabricatorPoller(object):
             arcproject = self._project_id_to_arcproject[project.id]
             results = self.client.differential.query(
                 arcanistProjects=[arcproject],
-                limit=5,
+                limit=25,
             )
             for result in results:
                 yield (project, result)

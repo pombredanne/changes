@@ -261,7 +261,9 @@ class KoalityBackend(BaseBackend):
             build.date_started = self._get_start_time(stage_list)
             build.date_finished = self._get_end_time(stage_list)
 
-            if change['startTime']:
+            if change['startTime'] and not build.date_started:
+                build.date_started = datetime.utcfromtimestamp(change['startTime'] / 1000)
+            elif change['startTime']:
                 build.date_started = min(
                     build.date_started,
                     datetime.utcfromtimestamp(change['startTime'] / 1000))
@@ -388,20 +390,20 @@ class KoalityBackend(BaseBackend):
             if not project_entity:
                 raise ValueError('Project does not have a remote entity')
 
-        req_kwargs = {}
+        req_kwargs = {
+            'data': {
+                'sha': build.parent_revision_sha,
+            }
+        }
         if build.patch:
+            print build.patch.diff
             req_kwargs['files'] = {
-                'patch': (
-                    '{0}.diff'.format(build.patch.id),
-                    StringIO(build.patch.diff)
-                )
+                'patch': StringIO(build.patch.diff)
             }
 
         response = self._get_response('POST', '{base_uri}/api/v/0/repositories/{project_id}/changes'.format(
             base_uri=self.base_url, project_id=project_entity.remote_id,
-        ), data={
-            'sha': build.parent_revision_sha,
-        }, **req_kwargs)
+        ), **req_kwargs)
 
         entity = RemoteEntity(
             provider='koality', remote_id=str(response['changeId']),

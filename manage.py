@@ -6,6 +6,29 @@ from changes.db import psyco_gevent
 psyco_gevent.make_psycopg_green()
 
 
+def resync_builds(app):
+    def action():
+        """
+        Enqueue syncs to all build's that are marked as 'queued' or
+        'in progress'.
+        """
+        import gevent
+
+        from changes.constants import Status
+        from changes.jobs.sync_build import sync_build
+        from changes.models import Build
+
+        with app.app_context():
+            results = Build.query.filter(
+                Build.status.in_([Status.queued, Status.in_progress]))
+
+            for build in results:
+                sync_build.delay(build_id=build.id)
+                gevent.sleep(0)
+
+    return action
+
+
 def run_gevent_server(app):
     def action(host=('h', '0.0.0.0'), port=('p', 7777)):
         """run application use gevent http server
@@ -39,6 +62,12 @@ def run_worker(app):
     return action
 
 
+def run_poller(app):
+    def action(queues=('queues', 'default')):
+        from changes.runner import poller
+        poller()
+    return action
+
 from flask.ext.actions import Manager
 
 from changes.config import create_app
@@ -49,6 +78,8 @@ app = create_app()
 manager = Manager(app)
 manager.add_action('run_gevent', run_gevent_server)
 manager.add_action('worker', run_worker)
+manager.add_action('poller', run_poller)
+manager.add_action('resync_builds', resync_builds)
 
 if __name__ == "__main__":
     manager.run()

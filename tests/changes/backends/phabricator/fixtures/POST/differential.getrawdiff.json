@@ -1,0 +1,5 @@
+{
+  "result": "diff --git a/README.rst b/README.rst\nindex 2ef2938..ed80350 100644\n--- a/README.rst\n+++ b/README.rst\n@@ -1,5 +1,5 @@\n Setup\n------\n+=====",
+  "error_code": null,
+  "error_info": null
+}

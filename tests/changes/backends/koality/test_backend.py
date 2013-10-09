@@ -1,9 +1,12 @@
 from __future__ import absolute_import
 
-import mock
+import cgi
+import httpretty
 import os
 
+from cStringIO import StringIO
 from datetime import datetime
+from urlparse import parse_qs
 
 from changes.backends.koality.backend import KoalityBackend
 from changes.config import db
@@ -13,7 +16,6 @@ from changes.models import (
     Phase, Step, Patch
 )
 from changes.testutils import BackendTestCase
-from changes.testutils.http import MockedResponse
 
 
 SAMPLE_DIFF = """diff --git a/README.rst b/README.rst
@@ -35,34 +37,42 @@ class KoalityBackendTestCase(BackendTestCase):
     provider = 'koality'
 
     def setUp(self):
-        self.mock_request = mock.Mock(
-            side_effect=MockedResponse(
-                self.backend_options['base_url'],
-                os.path.join(os.path.dirname(__file__), 'fixtures')),
-        )
-
-        self.patcher = mock.patch.object(
-            KoalityBackend,
-            '_get_response',
-            side_effect=self.mock_request,
-        )
-        self.patcher.start()
-        self.addCleanup(self.patcher.stop)
-
         self.repo = Repository(url='https://github.com/dropbox/changes.git')
         self.project = Project(repository=self.repo, name='test', slug='test')
 
         db.session.add(self.repo)
         db.session.add(self.project)
 
+    def load_fixture(self, filename):
+        filepath = os.path.join(
+            os.path.dirname(__file__),
+            filename,
+        )
+        with open(filepath, 'rb') as fp:
+            return fp.read()
+
     def make_project_entity(self, project=None):
         return self.make_entity(EntityType.project, (project or self.project).id, 1)
+
+    def load_request_params(self, request):
+        return parse_qs(request.body)
 
 
 class SyncBuildDetailsTest(KoalityBackendTestCase):
     # TODO(dcramer): we should break this up into testing individual methods
     # so edge cases can be more isolated
+    @httpretty.activate
     def test_simple(self):
+        httpretty.register_uri(
+            httpretty.GET, 'https://koality.example.com/api/v/0/repositories/1/changes',
+            body=self.load_fixture('fixtures/GET/changes.json'))
+        httpretty.register_uri(
+            httpretty.GET, 'https://koality.example.com/api/v/0/repositories/1/changes/1',
+            body=self.load_fixture('fixtures/GET/changes__1.json'))
+        httpretty.register_uri(
+            httpretty.GET, 'https://koality.example.com/api/v/0/repositories/1/changes/1/stages',
+            body=self.load_fixture('fixtures/GET/stages.json'))
+
         backend = self.get_backend()
         change = self.create_change(self.project)
         build = self.create_build(project=self.project, change=change)
@@ -192,7 +202,12 @@ class SyncBuildDetailsTest(KoalityBackendTestCase):
 
 
 class CreateBuildTest(KoalityBackendTestCase):
+    @httpretty.activate
     def test_simple(self):
+        httpretty.register_uri(
+            httpretty.POST, 'https://koality.example.com/api/v/0/repositories/1/changes',
+            body=self.load_fixture('fixtures/POST/changes.json'))
+
         backend = self.get_backend()
 
         project_entity = self.make_project_entity()
@@ -217,12 +232,17 @@ class CreateBuildTest(KoalityBackendTestCase):
         assert entity.remote_id == '1501'
         assert entity.provider == 'koality'
 
-        self.mock_request.assert_called_once_with(
-            'POST', 'https://koality.example.com/api/v/0/repositories/1/changes',
-            data={'sha': revision},
-        )
+        request = httpretty.last_request()
+        assert self.load_request_params(request) == {
+            'sha': [revision],
+        }
 
+    @httpretty.activate
     def test_patch(self):
+        httpretty.register_uri(
+            httpretty.POST, 'https://koality.example.com/api/v/0/repositories/1/changes',
+            body=self.load_fixture('fixtures/POST/changes.json'))
+
         backend = self.get_backend()
 
         project_entity = self.make_project_entity()
@@ -257,8 +277,9 @@ class CreateBuildTest(KoalityBackendTestCase):
         assert entity.remote_id == '1501'
         assert entity.provider == 'koality'
 
-        self.mock_request.assert_called_once_with(
-            'POST', 'https://koality.example.com/api/v/0/repositories/1/changes',
-            data={'sha': revision},
-            files={'patch': SAMPLE_DIFF},
-        )
+        request = httpretty.last_request()
+        ctype, pdict = cgi.parse_header(request.headers['Content-Type'])
+        assert ctype == 'multipart/form-data'
+        params = cgi.parse_multipart(StringIO(request.body), pdict)
+        assert params['sha'] == [revision]
+        assert params['patch'] == [SAMPLE_DIFF]
