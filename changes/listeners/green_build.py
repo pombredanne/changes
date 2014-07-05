@@ -3,6 +3,7 @@ import requests
 
 from datetime import datetime
 from flask import current_app
+from time import time
 
 from changes.config import db
 from changes.constants import Result
@@ -61,19 +62,26 @@ def build_finished_handler(build_id, **kwargs):
         logger.info('green-build.notify disabled for project: %s', build.project_id)
         return
 
-    if source.repository.backend != RepositoryBackend.hg:
-        logger.info('Repository backend is not supported: %s', source.repository.id)
-        return
-
     vcs = source.repository.get_vcs()
     if vcs is None:
         logger.info('Repository has no VCS set: %s', source.repository.id)
         return
 
     # ensure we have the latest changes
-    vcs.update()
+    if vcs.exists():
+        vcs.update()
+    else:
+        vcs.clone()
 
-    release_id = vcs.run(['log', '-r %s' % (source.revision_sha,), '--limit=1', '--template={rev}:{node|short}'])
+    # green_build requires an identifier that is <integer:revision_sha>
+    # the integer must also be sequential and unique
+    # TODO(dcramer): it's a terrible API and realistically we should just be
+    # sending a sha, as the sequential counter is hg-only, invalid, and really
+    # isn't used
+    if source.repository.backend == RepositoryBackend.hg:
+        release_id = vcs.run(['log', '-r %s' % (source.revision_sha,), '--limit=1', '--template={rev}:{node|short}'])
+    else:
+        release_id = '%d:%s' % (time(), source.revision_sha)
 
     project = options.get('green-build.project') or build.project.slug
 

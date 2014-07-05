@@ -23,6 +23,9 @@
 							<a ng-repeat="logSource in step.logSources"
 							   ui-sref="log_details({source_id: logSource.id})"
 							   tooltip="Log: {{logSource.name}}"><span class="glyphicon glyphicon-unchecked"></span></a>
+							<a ng-if="step.data.uri"
+							   href="{{step.data.uri}}"><span class="glyphicon glyphicon-link"></span></a>
+
 							{{step.name}}
 						</td>
 						<td>{{step.status.name}}</td>

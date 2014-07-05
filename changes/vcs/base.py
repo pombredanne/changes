@@ -21,6 +21,9 @@ class CommandError(Exception):
         return '%s returned %d:\nSTDOUT: %r\nSTDERR: %r' % (
             self.cmd, self.retcode, self.stdout, self.stderr)
 
+    def __str__(self):
+        return self.__unicode__().encode('utf-8')
+
 
 class BufferParser(object):
     def __init__(self, fp, delim):
@@ -93,7 +96,7 @@ class Vcs(object):
     def update(self):
         raise NotImplementedError
 
-    def log(self, parent=None, limit=100):
+    def log(self, parent=None, offset=0, limit=100):
         raise NotImplementedError
 
     def export(self, id):
@@ -105,8 +108,14 @@ class Vcs(object):
         """
         return self.log(parent=id, limit=1).next()
 
+    def get_default_revision(self):
+        raise NotImplementedError
+
 
 class RevisionResult(object):
+    parents = None
+    branches = None
+
     def __init__(self, id, message, author, author_date, committer=None,
                  committer_date=None, parents=None, branches=None):
         self.id = id
@@ -115,8 +124,10 @@ class RevisionResult(object):
         self.author_date = author_date
         self.committer = committer or author
         self.committer_date = committer_date or author_date
-        self.parents = parents
-        self.branches = branches
+        if parents is not None:
+            self.parents = parents
+        if branches is not None:
+            self.branches = branches
 
     def __repr__(self):
         return '<%s: id=%r author=%r subject=%r>' % (

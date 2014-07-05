@@ -1,95 +1,15 @@
 define([
-  'app'
-], function(app) {
+  'app',
+  'utils/sortArray'
+], function(app, sortArray) {
   'use strict';
-
-  var BUFFER_SIZE = 10000;
 
   return {
     url: "jobs/:job_id/",
     parent: 'build_details',
     templateUrl: 'partials/job-details.html',
-    controller: function($scope, $http, $filter, projectData, buildData, jobData, stream, PageTitle, Pagination) {
-      var logStreams = {};
-
-      function getLogSourceEntrypoint(jobId, logSourceId) {
-        return '/api/0/jobs/' + jobId + '/logs/' + logSourceId + '/';
-      }
-
-      function updateBuildLog(data) {
-        // Angular isn't intelligent enough to optimize this.
-        var $el = $('#log-' + data.source.id + ' > .build-log'),
-            item, source_id = data.source.id,
-            chars_to_remove, lines_to_remove,
-            frag;
-
-        if ($el.length === 0) {
-          // logsource isnt available in viewpane
-          return;
-        }
-
-        if (!logStreams[source_id]) {
-          return;
-        }
-
-        item = logStreams[source_id];
-        if (data.offset < item.nextOffset) {
-          return;
-        }
-
-        item.nextOffset = data.offset + data.size;
-
-        if (item.size > BUFFER_SIZE) {
-          $el.empty();
-        } else {
-          // determine how much space we need to clear up to append data.size
-          chars_to_remove = 0 - (BUFFER_SIZE - item.size - data.size);
-
-          if (chars_to_remove > 0) {
-            // determine the number of actual lines to remove
-            lines_to_remove = item.text.substr(0, chars_to_remove).split('\n').length;
-
-            // remove number of lines (accounted by <div>'s)
-            $el.find('div').slice(0, lines_to_remove - 1).remove();
-          }
-        }
-
-        frag = document.createDocumentFragment();
-
-        // add each additional new line
-        $.each(data.text.split('\n'), function(_, line){
-          var div = document.createElement('div');
-          div.className = 'line';
-          div.innerHTML = line;
-          frag.appendChild(div);
-        });
-
-
-        item.text = (item.text + data.text).substr(-BUFFER_SIZE);
-        item.size = item.text.length;
-
-        $el.append(frag);
-
-        if ($el.is(':visible')) {
-          var el = $el.get(0);
-          el.scrollTop = Math.max(el.scrollHeight, el.clientHeight) - el.clientHeight;
-        }
-      }
-
-      $scope.loadLogSource = function(logSource){
-        logStreams[logSource.id] = {
-          text: '',
-          size: 0,
-          nextOffset: 0
-        };
-
-        $http.get(getLogSourceEntrypoint($scope.job.id, logSource.id) + '?limit=' + BUFFER_SIZE)
-          .success(function(data){
-            $.each(data.chunks, function(_, chunk){
-              updateBuildLog(chunk);
-            });
-          });
-      };
+    controller: function($scope, $http, $filter, projectData, buildData, Collection,
+                         jobData, phaseList, CollectionPoller, ItemPoller, PageTitle) {
 
       function updateJob(data){
         if (data.id !== $scope.job.id) {
@@ -108,41 +28,80 @@ define([
         return 'Job ' + job.id + ' - ' + projectData.name;
       }
 
-      function organizeLogSources(logSources) {
-        var result = {};
-        $.each(logSources, function(_, source){
-          if (!source.step.phase) {
-            // legacy, incompatible
-            return;
-          }
-          var phaseId = source.step.phase.id;
-          if (result[phaseId] === undefined) {
-            result[phaseId] = [source];
-          } else {
-            result[phaseId].push(source);
+      function processPhase(phase) {
+        if (phase.isVisible === undefined) {
+          phase.isVisible = phase.status.id != 'finished' || phase.result.id != 'passed';
+        }
+
+        phase.steps = new Collection(phase.steps, {
+          sortFunc: function(arr) {
+            function getScore(object) {
+              return [object.result.id == 'failed' ? 1 : 2, (object.dateStarted || object.dateCreated)];
+            }
+            return sortArray(arr, getScore, false);
           }
         });
-        return result;
+
+        phase.totalSteps = phase.steps.length;
+
+        var finishedSteps = 0;
+        $.each(phase.steps, function(_, step){
+          if (step.status.id == 'finished') {
+            finishedSteps += 1;
+          }
+        });
+        phase.finishedSteps = finishedSteps;
       }
 
-      $scope.job = jobData.data;
-      $scope.phases = jobData.data.phases;
-      $scope.testFailures = jobData.data.testFailures;
-      $scope.previousRuns = jobData.data.previousRuns;
-      $scope.logSourcesByPhase = organizeLogSources(jobData.data.logs);
+      $.map(phaseList, processPhase);
+
+      $scope.job = jobData;
+      $scope.phaseList = new Collection(phaseList, {
+          sortFunc: function(arr) {
+            function getScore(object) {
+              return [new Date(object.dateStarted || object.dateCreated)];
+            }
+            return sortArray(arr, getScore);
+          }
+      });
+      $scope.testFailures = jobData.testFailures;
+      $scope.previousRuns = new Collection(jobData.previousRuns);
 
       PageTitle.set(getPageTitle(buildData, $scope.job));
 
-      stream.addScopedChannels($scope, [
-        'jobs:' + $scope.job.id,
-        'logsources:' + $scope.job.id + ':*'
-      ]);
-      stream.addScopedSubscriber($scope, 'job.update', updateJob);
-      stream.addScopedSubscriber($scope, 'buildlog.update', updateBuildLog);
+      // TODO(dcramer): support long polling with offsets
+      var poller = new ItemPoller({
+        $scope: $scope,
+        endpoint: '/api/0/jobs/' + jobData.id + '/',
+        update: function(response) {
+          if (response.dateModified < $scope.job.dateModified) {
+            return;
+          }
+          $.extend(true, $scope.job, response);
+          $.extend(true, $scope.testFailures, response.testFailures);
+          $scope.previousRuns.extend(response.previousRuns);
+        }
+      });
+      var phasesPoller = new CollectionPoller({
+        $scope: $scope,
+        collection: $scope.phaseList,
+        endpoint: '/api/0/jobs/' + jobData.id + '/phases/',
+        update: function(response) {
+          $scope.phaseList.extend(response);
+          $.map($scope.phaseList, processPhase);
+        }
+      });
     },
     resolve: {
       jobData: function($http, $stateParams) {
-        return $http.get('/api/0/jobs/' + $stateParams.job_id + '/');
+        return $http.get('/api/0/jobs/' + $stateParams.job_id + '/').then(function(response){
+          return response.data;
+        });
+      },
+      phaseList: function($http, $stateParams) {
+        return $http.get('/api/0/jobs/' + $stateParams.job_id + '/phases/').then(function(response){
+          return response.data;
+        });
       }
     }
   };

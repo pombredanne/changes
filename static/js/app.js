@@ -8,15 +8,18 @@ define([
   'angularRoute',
   'angularSanitize',
   'angularUIRouter',
+  'bootstrap/dropdown',
+  'bootstrap/tooltip',
   'jquery',
   'modules/barChart',
   'modules/collection',
   'modules/d3BarChart',
   'modules/flash',
   'modules/pageTitle',
-  'modules/pagination',
+  'modules/paginator',
+  'modules/poller',
   'modules/scalyr',
-  'modules/stream'
+  'modules/typeahead'
   ], function (angular) {
     'use strict';
 
@@ -24,6 +27,9 @@ define([
       'barChart',
       'changes.barchart',
       'changes.pageTitle',
+      'changes.paginator',
+      'changes.poller',
+      'changes.typeahead',
       'chieffancypants.loadingBar',
       'collection',
       'flash',
@@ -32,9 +38,7 @@ define([
       'ngAnimate',
       'ngRoute',
       'ngSanitize',
-      'pagination',
       'sly',
-      'stream',
       'ui.bootstrap',
       'ui.router'
     ]);

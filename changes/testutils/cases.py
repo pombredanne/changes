@@ -2,7 +2,7 @@ from __future__ import absolute_import
 
 import mock
 import json
-import unittest2
+import unittest
 
 from exam import Exam, fixture
 from flask import current_app as app
@@ -46,26 +46,8 @@ class AuthMixin(object):
         return self.login(self.default_admin)
 
 
-class TestCase(Exam, unittest2.TestCase, Fixtures, AuthMixin):
+class TestCase(Exam, unittest.TestCase, Fixtures, AuthMixin):
     def setUp(self):
-        self.repo = self.create_repo(
-            url='https://github.com/dropbox/changes.git',
-        )
-        self.project = self.create_project(
-            repository=self.repo,
-            name='test',
-            slug='test'
-        )
-        self.project2 = self.create_project(
-            repository=self.repo,
-            name='test2',
-            slug='test2',
-        )
-
-        self.plan = self.create_plan()
-        self.plan.projects.append(self.project)
-        db.session.commit()
-
         # mock out mail
         mail_context = mail.record_messages()
         self.outbox = mail_context.__enter__()

@@ -22,10 +22,25 @@ class RepositoryBackend(Enum):
         return BACKEND_LABELS[self]
 
 
+class RepositoryStatus(Enum):
+    inactive = 0
+    active = 1
+    importing = 2
+
+    def __str__(self):
+        return STATUS_LABELS[self]
+
+
 BACKEND_LABELS = {
     RepositoryBackend.unknown: 'Unknown',
     RepositoryBackend.git: 'git',
     RepositoryBackend.hg: 'hg',
+}
+
+STATUS_LABELS = {
+    RepositoryStatus.inactive: 'Inactive',
+    RepositoryStatus.active: 'Active',
+    RepositoryStatus.importing: 'importing',
 }
 
 
@@ -36,6 +51,9 @@ class Repository(db.Model):
     url = Column(String(200), nullable=False, unique=True)
     backend = Column(EnumType(RepositoryBackend),
                      default=RepositoryBackend.unknown, nullable=False)
+    status = Column(EnumType(RepositoryStatus),
+                    default=RepositoryStatus.inactive,
+                    nullable=False, server_default='1')
     date_created = Column(DateTime, default=datetime.utcnow)
 
     last_update = Column(DateTime)

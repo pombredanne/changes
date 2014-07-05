@@ -2,16 +2,122 @@ from __future__ import absolute_import
 
 import mock
 
+from datetime import datetime
+
 from changes.config import db
 from changes.constants import Result, Status
-from changes.jobs.sync_job_step import sync_job_step
+from changes.jobs.sync_job_step import sync_job_step, is_missing_tests
 from changes.models import (
-    ItemStat, JobStep, ProjectOption, Step, Task, FileCoverage
+    ItemOption, ItemStat, JobStep, Step, Task, FileCoverage, TestCase,
+    FailureReason
 )
-from changes.testutils import TestCase
+from changes.testutils import TestCase as BaseTestCase
 
 
-class SyncJobStepTest(TestCase):
+class IsMissingTestsTest(BaseTestCase):
+    def test_single_phase(self):
+        project = self.create_project()
+        plan = self.create_plan()
+
+        option = ItemOption(
+            item_id=plan.id,
+            name='build.expect-tests',
+            value='0',
+        )
+        db.session.add(option)
+        db.session.commit()
+
+        build = self.create_build(project=project)
+        job = self.create_job(build=build)
+        jobphase = self.create_jobphase(job)
+        jobstep = self.create_jobstep(jobphase)
+        jobstep2 = self.create_jobstep(jobphase)
+
+        assert not is_missing_tests(plan, jobstep)
+
+        option.value = '1'
+        db.session.commit()
+
+        assert is_missing_tests(plan, jobstep)
+
+        testcase = TestCase(
+            project_id=project.id,
+            job_id=job.id,
+            step_id=jobstep2.id,
+            name='test',
+        )
+        db.session.add(testcase)
+        db.session.commit()
+
+        assert is_missing_tests(plan, jobstep)
+
+        testcase = TestCase(
+            project_id=project.id,
+            job_id=job.id,
+            step_id=jobstep.id,
+            name='test2',
+        )
+        db.session.add(testcase)
+        db.session.commit()
+
+        assert not is_missing_tests(plan, jobstep)
+
+    def test_multi_phase(self):
+        project = self.create_project()
+
+        plan = self.create_plan()
+
+        option = ItemOption(
+            item_id=plan.id,
+            name='build.expect-tests',
+            value='1',
+        )
+        db.session.add(option)
+        db.session.commit()
+
+        build = self.create_build(project=project)
+        job = self.create_job(build=build)
+        jobphase = self.create_jobphase(
+            job=job,
+            label='setup',
+            date_created=datetime(2013, 9, 19, 22, 15, 24),
+        )
+        jobphase2 = self.create_jobphase(
+            job=job,
+            label='test',
+            date_created=datetime(2013, 9, 19, 22, 16, 24),
+        )
+        jobstep = self.create_jobstep(jobphase)
+        jobstep2 = self.create_jobstep(jobphase2)
+
+        assert not is_missing_tests(plan, jobstep)
+        assert is_missing_tests(plan, jobstep2)
+
+        testcase = TestCase(
+            project_id=project.id,
+            job_id=job.id,
+            step_id=jobstep.id,
+            name='test',
+        )
+        db.session.add(testcase)
+        db.session.commit()
+
+        assert not is_missing_tests(plan, jobstep)
+        assert is_missing_tests(plan, jobstep2)
+
+        testcase = TestCase(
+            project_id=project.id,
+            job_id=job.id,
+            step_id=jobstep2.id,
+            name='test2',
+        )
+        db.session.add(testcase)
+        db.session.commit()
+
+        assert not is_missing_tests(plan, jobstep2)
+
+
+class SyncJobStepTest(BaseTestCase):
     @mock.patch('changes.config.queue.delay')
     @mock.patch.object(Step, 'get_implementation')
     def test_in_progress(self, get_implementation, queue_delay):
@@ -21,7 +127,8 @@ class SyncJobStepTest(TestCase):
         def mark_in_progress(step):
             step.status = Status.in_progress
 
-        build = self.create_build(project=self.project)
+        project = self.create_project()
+        build = self.create_build(project=project)
         job = self.create_job(build=build)
 
         plan = self.create_plan()
@@ -78,11 +185,12 @@ class SyncJobStepTest(TestCase):
 
         def mark_finished(step):
             step.status = Status.finished
-            step.result = Result.passed
+            step.result = Result.failed
 
         implementation.update_step.side_effect = mark_finished
 
-        build = self.create_build(project=self.project)
+        project = self.create_project()
+        build = self.create_build(project=project)
         job = self.create_job(build=build)
 
         plan = self.create_plan()
@@ -97,6 +205,14 @@ class SyncJobStepTest(TestCase):
             task_name='sync_job_step',
             status=Status.finished,
         )
+
+        db.session.add(TestCase(
+            name='test',
+            step_id=step.id,
+            job_id=job.id,
+            project_id=project.id,
+            result=Result.failed,
+        ))
 
         db.session.add(FileCoverage(
             job=job, step=step, project=job.project,
@@ -163,6 +279,11 @@ class SyncJobStepTest(TestCase):
         ).first()
         assert stat.value == 2
 
+        assert FailureReason.query.filter(
+            FailureReason.step_id == step.id,
+            FailureReason.reason == 'test_failures',
+        )
+
     @mock.patch('changes.config.queue.delay')
     @mock.patch.object(Step, 'get_implementation')
     def test_missing_test_results_and_expected(self, get_implementation, queue_delay):
@@ -175,7 +296,8 @@ class SyncJobStepTest(TestCase):
 
         implementation.update_step.side_effect = mark_finished
 
-        build = self.create_build(project=self.project)
+        project = self.create_project()
+        build = self.create_build(project=project)
         job = self.create_job(build=build)
 
         plan = self.create_plan()
@@ -185,8 +307,8 @@ class SyncJobStepTest(TestCase):
         phase = self.create_jobphase(job)
         step = self.create_jobstep(phase)
 
-        db.session.add(ProjectOption(
-            project_id=self.project.id,
+        db.session.add(ItemOption(
+            item_id=plan.id,
             name='build.expect-tests',
             value='1'
         ))
@@ -210,3 +332,8 @@ class SyncJobStepTest(TestCase):
             ItemStat.name == 'tests_missing',
         ).first()
         assert stat.value == 1
+
+        assert FailureReason.query.filter(
+            FailureReason.step_id == step.id,
+            FailureReason.reason == 'missing_tests',
+        )

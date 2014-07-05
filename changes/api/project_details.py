@@ -1,37 +1,16 @@
-from flask import request
+from __future__ import division
+
+from datetime import datetime, timedelta
+from flask.ext.restful import reqparse
 from sqlalchemy.orm import contains_eager, joinedload, subqueryload_all
+from sqlalchemy.sql import func
 
 from changes.api.base import APIView
 from changes.config import db
 from changes.models import (
-    Project, Plan, Build, Source, Status, Result, ProjectOption
+    Project, Plan, Build, Source, Status, Result, ProjectOption, Repository
 )
 
-
-class ValidationError(Exception):
-    pass
-
-
-class Validator(object):
-    fields = ()
-
-    def __init__(self, data=None, initial=None):
-        self.data = data or {}
-        self.initial = initial or {}
-
-    def clean(self):
-        result = {}
-        for name in self.fields:
-            value = self.data.get(name, self.initial.get(name))
-            if isinstance(value, basestring):
-                value = value.strip()
-            result[name] = value
-
-        for key, value in result.iteritems():
-            if not value:
-                raise ValidationError('%s is required' % (key,))
-
-        return result
 
 OPTION_DEFAULTS = {
     'green-build.notify': '0',
@@ -46,14 +25,77 @@ OPTION_DEFAULTS = {
 }
 
 
-class ProjectValidator(Validator):
-    fields = (
-        'name',
-        'slug',
-    )
-
-
 class ProjectDetailsAPIView(APIView):
+    post_parser = reqparse.RequestParser()
+    post_parser.add_argument('name')
+    post_parser.add_argument('slug')
+    post_parser.add_argument('repository')
+
+    def _get_avg_duration(self, project, start_period, end_period):
+        avg_duration = db.session.query(
+            func.avg(Build.duration)
+        ).filter(
+            Build.project_id == project.id,
+            Build.date_created >= start_period,
+            Build.date_created < end_period,
+            Build.status == Status.finished,
+            Build.result == Result.passed,
+        ).scalar() or None
+        if avg_duration is not None:
+            avg_duration = float(avg_duration)
+        return avg_duration
+
+    def _get_green_percent(self, project, start_period, end_period):
+        build_counts = dict(db.session.query(
+            Build.result, func.count()
+        ).join(
+            Source, Build.source_id == Source.id,
+        ).filter(
+            Source.patch_id == None,  # NOQA
+            Build.project_id == project.id,
+            Build.date_created >= start_period,
+            Build.date_created < end_period,
+            Build.status == Status.finished,
+            Build.result.in_([Result.passed, Result.failed])
+        ).group_by(
+            Build.result,
+        ))
+
+        failed_builds = build_counts.get(Result.failed) or 0
+        passed_builds = build_counts.get(Result.passed) or 0
+        if passed_builds:
+            green_percent = int((passed_builds / (failed_builds + passed_builds)) * 100)
+        elif failed_builds:
+            green_percent = 0
+        else:
+            green_percent = None
+
+        return green_percent
+
+    def _get_stats(self, project):
+        window = timedelta(days=7)
+
+        end_period = datetime.utcnow()
+        start_period = end_period - window
+
+        prev_end_period = start_period
+        prev_start_period = start_period - window
+
+        green_percent = self._get_green_percent(project, start_period, end_period)
+        prev_green_percent = self._get_green_percent(
+            project, prev_start_period, prev_end_period)
+
+        avg_duration = self._get_avg_duration(project, start_period, end_period)
+        prev_avg_duration = self._get_avg_duration(
+            project, prev_start_period, prev_end_period)
+
+        return {
+            'greenPercent': green_percent,
+            'previousGreenPercent': prev_green_percent,
+            'avgDuration': avg_duration,
+            'previousAvgDuration': prev_avg_duration,
+        }
+
     def get(self, project_id):
         project = Project.get(project_id)
         if project is None:
@@ -108,6 +150,7 @@ class ProjectDetailsAPIView(APIView):
         data['repository'] = project.repository
         data['plans'] = list(plans)
         data['options'] = options
+        data['stats'] = self._get_stats(project)
 
         return self.respond(data)
 
@@ -116,20 +159,30 @@ class ProjectDetailsAPIView(APIView):
         if project is None:
             return '', 404
 
-        validator = ProjectValidator(
-            data=request.form,
-            initial={
-                'name': project.name,
-                'slug': project.slug,
-            },
-        )
-        try:
-            result = validator.clean()
-        except ValidationError:
-            return '', 400
+        args = self.post_parser.parse_args()
 
-        project.name = result['name']
-        project.slug = result['slug']
+        if args.name:
+            project.name = args.name
+
+        if args.slug:
+            match = Project.query.filter(
+                Project.slug == args.slug,
+                Project.id != project.id,
+            ).first()
+            if match:
+                return '{"error": "Project with slug %r already exists"}' % (args.slug,), 400
+
+            project.slug = args.slug
+
+        if args.repository:
+            repository = Repository.get(args.repository)
+            if repository is None:
+                return '{"error": "Repository with url %r does not exist"}' % (args.repository,), 400
+            project.repository = repository
+
         db.session.add(project)
 
-        return self.respond(project)
+        data = self.serialize(project)
+        data['repository'] = self.serialize(project.repository)
+
+        return self.respond(data, serialize=False)

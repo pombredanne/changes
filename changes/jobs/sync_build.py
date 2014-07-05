@@ -5,7 +5,6 @@ from sqlalchemy.sql import func
 from changes.config import db, queue
 from changes.constants import Result, Status
 from changes.db.utils import try_create
-from changes.events import publish_build_update
 from changes.jobs.signals import fire_signal
 from changes.models import Build, ItemStat, Job
 from changes.utils.agg import safe_agg
@@ -14,7 +13,7 @@ from changes.queue.task import tracked_task
 
 def aggregate_build_stat(build, name, func_=func.sum):
     value = db.session.query(
-        func_(ItemStat.value),
+        func.coalesce(func_(ItemStat.value), 0),
     ).filter(
         ItemStat.item_id.in_(
             db.session.query(Job.id).filter(
@@ -98,7 +97,6 @@ def sync_build(build_id):
         build.date_modified = datetime.utcnow()
         db.session.add(build)
         db.session.commit()
-        publish_build_update(build)
 
     if not is_finished:
         raise sync_build.NotFinished

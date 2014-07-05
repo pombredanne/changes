@@ -9,18 +9,12 @@ Magic.
 """
 
 from setuptools import setup, find_packages
-from setuptools.command.test import test as TestCommand
-import sys
-
-setup_requires = []
-
-if 'test' in sys.argv:
-    setup_requires.append('pytest')
 
 tests_require = [
     'exam>=0.10.2,<0.11.0',
     'flake8>=2.1.0,<2.2.0',
     'loremipsum>=1.0.2,<1.1.0',
+    'mercurial>=2.4',
     'mock>=1.0.1,<1.1.0',
     'pytest>=2.5.0,<2.6.0',
     'pytest-cov>=1.6,<1.7',
@@ -46,11 +40,10 @@ install_requires = [
     'flask-mail>=0.9.0,<0.10.0',
     'flask-restful>=0.2.10,<0.2.11',
     'flask-sqlalchemy>=1.0,<1.1',
-    'gevent>=1.0.0,<1.1.0',
     'lxml>=3.2.3,<3.3.0',
     'raven>=4.0.4,<4.1.0',
     'redis>=2.8.0,<2.9.0',
-    'requests>=2.0.0,<2.1.0',
+    'requests>=2.3.0,<2.4.0',
     'oauth2client>=1.2,<1.3',
     'phabricator>=0.3.0,<0.4.0',
     'psycopg2>=2.5.1,<2.6.0',
@@ -59,21 +52,8 @@ install_requires = [
     'sqlalchemy==0.9.4',
     'statprof',
     'toronado==0.0.4',
+    'uwsgi>=2.0.4,<2.1.0',
 ]
-
-
-class PyTest(TestCommand):
-    def finalize_options(self):
-        TestCommand.finalize_options(self)
-        self.test_args = ['tests']
-        self.test_suite = True
-
-    def run_tests(self):
-        #import here, cause outside the eggs aren't loaded
-        import pytest
-        errno = pytest.main(self.test_args)
-        sys.exit(errno)
-
 
 setup(
     name='changes',
@@ -84,11 +64,8 @@ setup(
     packages=find_packages(),
     zip_safe=False,
     install_requires=install_requires,
-    extras_require={
-        'tests': tests_require,
-    },
+    extras_require={'tests': tests_require},
     tests_require=tests_require,
-    cmdclass={'test': PyTest},
     include_package_data=True,
     classifiers=[
         '__DO NOT UPLOAD__',

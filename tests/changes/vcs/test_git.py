@@ -39,6 +39,10 @@ class GitVcsTest(TestCase):
             path=self.path
         )
 
+    def test_get_default_revision(self):
+        vcs = self.get_vcs()
+        assert vcs.get_default_revision() == 'master'
+
     def test_simple(self):
         vcs = self.get_vcs()
         vcs.clone()
@@ -69,3 +73,10 @@ class GitVcsTest(TestCase):
 new file mode 100644
 index 0000000..e69de29
 """
+        revisions = list(vcs.log(offset=0, limit=1))
+        assert len(revisions) == 1
+        assert revisions[0].subject == 'biz'
+
+        revisions = list(vcs.log(offset=1, limit=1))
+        assert len(revisions) == 1
+        assert revisions[0].subject == 'test'

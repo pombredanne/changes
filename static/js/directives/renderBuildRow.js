@@ -32,6 +32,10 @@
         templateUrl: 'partials/includes/build-row.html',
         restrict: 'A',
         replace: true,
+        scope: {
+          build: '=buildrow',
+          features: '=features'
+        },
         link: function (scope, element, attrs) {
           var timeout_id;
 
@@ -47,16 +51,22 @@
             }
           }
 
-          scope.$watch(attrs.buildrow, function(build) {
-            scope.build = build;
+          scope.showProject = scope.$eval(attrs.showProject);
+          if (scope.showProject === undefined) {
+            scope.showProject = false;
+          }
+          scope.showBranches = scope.$eval(attrs.showBranches);
+          if (scope.showBranches === undefined) {
+            scope.showBranches = true;
+          }
+
+          scope.$watch('build.dateModified', function() {
+            var build = scope.build;
             scope.buildTitle = attrs.title || build.name;
             scope.hasCoverage = (build.stats.diff_lines_covered + build.stats.diff_lines_uncovered) > 0;
             scope.coveragePercent = getCoveragePercent(build);
             scope.isFinished = (build.status.id == 'finished');
             scope.isQueued = (build.status.id == 'queued');
-            scope.showProject = attrs.showProject;
-            scope.showBranches = attrs.showBranches;
-
             updateBuildProgress(build);
           });
 

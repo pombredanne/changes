@@ -7,7 +7,6 @@ from flask import Response, current_app, request
 from flask.ext.restful import Resource
 
 from changes.api.serializer import serialize as serialize_func
-from changes.api.stream import EventStream
 from changes.config import db
 
 LINK_HEADER = '<{uri}&page={page}>; rel="{name}"'
@@ -66,19 +65,13 @@ class ParamError(APIError):
 
 class APIView(Resource):
     def dispatch_request(self, *args, **kwargs):
-        if 'text/event-stream' in request.headers.get('Accept', ''):
-            channels = self.get_stream_channels(**kwargs)
-            if not channels:
-                return Response(status=404)
-            return self.stream_response(channels)
-
         response = super(APIView, self).dispatch_request(*args, **kwargs)
         db.session.commit()
         return response
 
     def paginate(self, queryset, max_per_page=100, **kwargs):
         page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 50) or 0)
+        per_page = int(request.args.get('per_page', 25) or 0)
         if max_per_page:
             assert per_page <= max_per_page
         assert page > 0
@@ -91,14 +84,23 @@ class APIView(Resource):
             page = 1
             result = list(queryset)
 
-        links = []
-        if page > 1:
-            links.append(('previous', page - 1))
-        if per_page and len(result) > per_page:
-            links.append(('next', page + 1))
+        links = self.make_links(
+            current_page=page,
+            has_next_page=per_page and len(result) > per_page,
+        )
+
+        if per_page:
             result = result[:per_page]
 
-        response = self.respond(result, **kwargs)
+        return self.respond(result, links=links, **kwargs)
+
+    def make_links(self, current_page, has_next_page=None):
+        links = []
+        if current_page > 1:
+            links.append(('previous', current_page - 1))
+
+        if has_next_page:
+            links.append(('next', current_page + 1))
 
         querystring = u'&'.join(
             u'{0}={1}'.format(quote(k), quote(v))
@@ -117,33 +119,31 @@ class APIView(Resource):
                 page=page_no,
                 name=name,
             ))
-        if link_values:
-            response.headers['Link'] = ', '.join(link_values)
-        return response
+        return link_values
 
-    def respond(self, context, status_code=200, serialize=True, serializers=None):
+    def respond(self, context, status_code=200, serialize=True, serializers=None,
+                links=None):
         if serialize:
             data = self.serialize(context, serializers)
         else:
             data = context
 
-        return Response(
+        response = Response(
             as_json(data),
             mimetype='application/json',
-            status=status_code)
+            status=status_code,
+        )
+
+        if links:
+            response.headers['Link'] = ', '.join(links)
+
+        return response
 
     def serialize(self, *args, **kwargs):
         return serialize_func(*args, **kwargs)
 
     def as_json(self, context):
         return json.dumps(context)
-
-    def get_stream_channels(self, **kwargs):
-        return []
-
-    def stream_response(self, channels):
-        stream = EventStream(channels=channels)
-        return Response(stream, mimetype='text/event-stream')
 
     def get_backend(self, app=current_app):
         # TODO this should be automatic via a project

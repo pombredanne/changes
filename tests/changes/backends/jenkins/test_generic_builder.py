@@ -14,7 +14,8 @@ class JenkinsGenericBuilderTest(BaseTestCase):
     }
 
     def test_get_job_parameters(self):
-        build = self.create_build(self.project)
+        project = self.create_project()
+        build = self.create_build(project)
         job = self.create_job(build)
 
         builder = self.get_builder()
@@ -28,8 +29,9 @@ class JenkinsGenericBuilderTest(BaseTestCase):
         assert {'name': 'SCRIPT', 'value': self.builder_options['script']} in result
         assert {'name': 'CLUSTER', 'value': self.builder_options['cluster']} in result
         assert {'name': 'WORK_PATH', 'value': 'foo'} in result
-        assert len(result) == 8
+        assert len(result) == 9
 
-        # test optional path value
+        # test optional values
         result = builder.get_job_parameters(job)
         assert {'name': 'WORK_PATH', 'value': ''} in result
+        assert {'name': 'C_WORKSPACE', 'value': ''} in result

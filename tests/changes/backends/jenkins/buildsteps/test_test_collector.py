@@ -33,7 +33,8 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
         builder = self.get_mock_builder()
         get_builder.return_value = builder
 
-        build = self.create_build(self.project)
+        project = self.create_project()
+        build = self.create_build(project)
         job = self.create_job(build, data={
             'job_name': 'server',
             'build_no': '35',
@@ -51,8 +52,9 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
         builder.sync_artifact.assert_called_once_with(step, artifact)
 
     def test_get_test_stats(self):
+        project = self.create_project()
         build = self.create_build(
-            project=self.project,
+            project=project,
             status=Status.finished,
             result=Result.passed,
         )
@@ -62,7 +64,7 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
 
         buildstep = self.get_buildstep()
 
-        results, avg_time = buildstep.get_test_stats(self.project)
+        results, avg_time = buildstep.get_test_stats(project)
 
         assert avg_time == 37
 
@@ -104,7 +106,8 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
             'foo.bar': 275,
         }, 68
 
-        build = self.create_build(self.project)
+        project = self.create_project()
+        build = self.create_build(project)
         job = self.create_job(build, data={
             'job_name': 'server',
             'build_no': '35',
@@ -137,6 +140,7 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
         assert len(new_steps) == 2
         assert new_steps[0].label == '790ed83d37c20fd5178ddb4f20242ef6'
         assert new_steps[0].data == {
+            'expanded': True,
             'build_no': 23,
             'job_name': 'foo-bar',
             'tests': ['foo.bar.test_buz'],
@@ -146,6 +150,7 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
 
         assert new_steps[1].label == '4984ae5173fdb4166e5454d2494a106d'
         assert new_steps[1].data == {
+            'expanded': True,
             'build_no': 23,
             'job_name': 'foo-bar',
             'tests': ['foo.bar.test_baz', 'foo.bar.test_bar', 'foo.bar.test_biz'],

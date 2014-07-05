@@ -9,13 +9,13 @@ define([
     url: "builds/:build_id/",
     templateUrl: 'partials/build-details.html',
     controller: function($document, $scope, $state, $http, $filter, features, projectData, buildData,
-                         coverageData, stream, flash, Collection, PageTitle) {
+                         coverageData, flash, Collection, ItemPoller, PageTitle) {
       function getCoveragePercent(lines_covered, lines_uncovered) {
         var total_lines = lines_covered + lines_uncovered;
         if (!total_lines) {
-          return 0;
+          return '';
         }
-        return parseInt(lines_covered / total_lines * 100, 10);
+        return parseInt(lines_covered / total_lines * 100, 10) + '%';
       }
 
       function getFormattedBuildMessage(message) {
@@ -37,7 +37,7 @@ define([
         $scope.hasTests = (features.tests && buildData.stats.test_count);
         $scope.isFinished = (buildData.status.id == 'finished');
         $scope.build = data;
-    }
+      }
 
       $scope.cancelBuild = function() {
         $http.post('/api/0/builds/' + $scope.build.id + '/cancel/')
@@ -69,18 +69,13 @@ define([
       };
 
       $scope.build = buildData;
-      if (buildData.message) {
-        $scope.formattedBuildMessage = getFormattedBuildMessage(buildData.message);
-      } else {
-        $scope.formattedBuildMessage = null;
-      }
-
-      $scope.eventList = buildData.events;
+      $scope.eventList = new Collection(buildData.events);
+      $scope.failureList = new Collection(buildData.failures);
       $scope.previousRuns = buildData.previousRuns;
       $scope.testFailures = buildData.testFailures;
       $scope.testChanges = buildData.testChanges;
       $scope.seenBy = buildData.seenBy.slice(0, 14);
-      $scope.jobList = new Collection($scope, buildData.jobs);
+      $scope.jobList = new Collection(buildData.jobs);
       $scope.phaseList = [
         {
           name: "Test",
@@ -113,27 +108,18 @@ define([
 
       PageTitle.set(getPageTitle(buildData));
 
-      stream.addScopedChannels($scope, [
-        'builds:' + buildData.id,
-        'builds:' + buildData.id + ':jobs'
-      ]);
-      stream.addScopedSubscriber($scope, 'build.update', function(data){
-        $scope.$apply(function() {
-          updateBuild(data);
-        });
-      });
-      stream.addScopedSubscriber($scope, 'job.update', function(data) {
-        if (data.build.id == $scope.build.id) {
-          $scope.jobList.updateItem(data);
-        }
-      });
-
       if (buildData.status.id === 'finished') {
         $http.post('/api/0/builds/' + buildData.id + '/mark_seen/');
       }
 
       // TODO(dcramer): we should actually find out if there could be > 1 job ever for this
-      $scope.isSingleJob = buildData.jobs.length === 1;
+      if (buildData.jobs.length === 1) {
+        $scope.isSingleJob = true;
+        $scope.job = buildData.jobs[0];
+      } else {
+        $scope.isSingleJob = false;
+        $scope.job = null;
+      }
 
       $scope.$on('$stateChangeSuccess', function(event, toState, toParams, fromState, fromParams){
         if (toState.name !== 'build_details') {
@@ -142,6 +128,21 @@ define([
 
         if ($scope.isSingleJob) {
           $state.go('job_details', {job_id: buildData.jobs[0].id}, {location: false});
+        }
+      });
+
+      var poller = new ItemPoller({
+        $scope: $scope,
+        endpoint: '/api/0/builds/' + buildData.id + '/',
+        update: function(response) {
+          if (response.dateModified < $scope.build.dateModified) {
+            return;
+          }
+          $.extend(true, $scope.build, response);
+          updateBuild(response);
+          $scope.jobList.extend(response.jobs);
+          $scope.eventList.extend(response.events);
+          $scope.failureList.extend(response.failures);
         }
       });
     },

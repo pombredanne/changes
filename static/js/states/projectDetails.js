@@ -5,14 +5,30 @@ define([
 
   return {
     abstract: true,
-    parent: 'projects',
-    url: ':project_id/',
+    parent: 'layout',
+    url: '/projects/:project_id/',
     templateUrl: 'partials/project-details.html',
     controller: function($document, $scope, $rootScope, features, projectData, PageTitle) {
       PageTitle.set(projectData.name);
 
       $scope.features = features;
       $scope.project = projectData;
+
+      var stats = projectData.stats;
+      if (stats.greenPercent && stats.previousGreenPercent !== null) {
+        stats.greenPercentChange = stats.greenPercent - stats.previousGreenPercent;
+      } else if (stats.previousGreenPercent !== null) {
+        stats.greenPercentChange = -stats.previousGreenPercent;
+      } else {
+        stats.greenPercentChange = null;
+      }
+
+      if (stats.avgDuration && stats.previousAvgDuration) {
+        stats.avgDurationChange = stats.avgDuration - stats.previousAvgDuration;
+      } else {
+        stats.avgDurationChange = null;
+      }
+
       $rootScope.activeProject = $scope.project;
       $rootScope.activeProjectFeatures = $scope.features;
     },

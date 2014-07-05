@@ -3,16 +3,33 @@ define([
   'utils/chartHelpers',
   'utils/duration',
   'utils/escapeHtml',
-  'utils/parseLinkHeader',
   'utils/sortBuildList'
-], function(app, chartHelpers, duration, escapeHtml, parseLinkHeader, sortBuildList) {
+], function(app, chartHelpers, duration, escapeHtml, sortBuildList) {
   'use strict';
+
+  var PER_PAGE = 50;
+
+  function getEndpoint($stateParams, options) {
+    if (options === undefined) {
+      options = {};
+    }
+
+    var per_page = options.per_page || PER_PAGE;
+    var url = '/api/0/projects/' + $stateParams.project_id + '/builds/search/?per_page=' + per_page;
+
+    if ($stateParams.query) {
+      url += '&query=' + $stateParams.query;
+    }
+
+    return url;
+  }
 
   return {
     parent: 'project_details',
     url: 'builds/?query',
     templateUrl: 'partials/project-build-list.html',
-    controller: function($scope, $http, $state, $stateParams, projectData, buildList, stream, Collection, PageTitle) {
+    controller: function($scope, $state, $stateParams, Collection, CollectionPoller,
+                         Paginator, PageTitle, projectData) {
       var chart_options = {
         linkFormatter: function(item) {
           return $state.href('build_details', {build_id: item.id});
@@ -56,16 +73,41 @@ define([
           }
 
           return content;
-        }
+        },
+        limit: PER_PAGE
       };
 
-      function updatePageLinks(links) {
-        var value = parseLinkHeader(links);
-
-        $scope.pageLinks = value;
-        $scope.nextPage = value.next || null;
-        $scope.previousPage = value.previous || null;
+      function selectChart(chart) {
+        if (chart) {
+          $scope.selectedChart = chart;
+        }
+        $scope.chartData = chartHelpers.getChartData(collection, null, chart_options);
       }
+
+      var collection = new Collection([], {
+        sortFunc: sortBuildList,
+        limit: PER_PAGE,
+        onUpdate: $scope.selectChart
+      });
+
+      var poller = new CollectionPoller({
+        $scope: $scope,
+        collection: collection,
+        endpoint: getEndpoint($stateParams, {per_page: 25}),
+        shouldUpdate: function(item, existing) {
+          if (existing.dateModified < item.dateModified) {
+            return true;
+          }
+          return false;
+        }
+      });
+
+      var paginator = new Paginator(getEndpoint($stateParams), {
+        collection: collection,
+        poller: poller
+      });
+
+      PageTitle.set(projectData.name + ' Builds');
 
       $scope.getBuildStatus = function(build) {
         if (build.status.id == 'finished') {
@@ -75,67 +117,12 @@ define([
         }
       };
 
-      function loadBuildList(url) {
-        if (!url) {
-          return;
-        }
-        $http.get(url)
-          .success(function(data, status, headers){
-            $scope.builds = new Collection($scope, data, {
-              sortFunc: sortBuildList,
-              limit: 100
-            });
-            updatePageLinks(headers('Link'));
-          });
-      }
-
-      $scope.loadPreviousPage = function() {
-        $(document.body).scrollTop(0);
-        loadBuildList($scope.pageLinks.previous);
-      };
-
-      $scope.loadNextPage = function() {
-        $(document.body).scrollTop(0);
-        loadBuildList($scope.pageLinks.next);
-      };
-
-      updatePageLinks(buildList.headers('Link'));
-
-      $scope.builds = new Collection($scope, buildList.data, {
-        sortFunc: sortBuildList,
-        limit: 100
-      });
-
-      $scope.selectChart = function(chart) {
-        $scope.selectedChart = chart;
-        $scope.chartData = chartHelpers.getChartData($scope.builds, null, chart_options);
-      };
+      $scope.selectChart = selectChart;
       $scope.selectChart('duration');
 
-      PageTitle.set(projectData.name + ' Builds');
+      $scope.buildList = collection;
+      $scope.buildPaginator = paginator;
 
-      $scope.$watchCollection("builds", function() {
-        $scope.chartData = chartHelpers.getChartData($scope.builds, null, chart_options);
-      });
-
-      stream.addScopedChannels($scope, [
-        'projects:' + $scope.project.id + ':builds'
-      ]);
-      stream.addScopedSubscriber($scope, 'build.update', function(data){
-        if (data.project.id != $scope.project.id) {
-          return;
-        }
-        if (!$stateParams.query) {
-          $scope.builds.updateItem(data);
-        } else {
-          $scope.builds.updateItem(data, false);
-        }
-      });
-    },
-    resolve: {
-      buildList: function($http, $window, projectData) {
-        return $http.get('/api/0/projects/' + projectData.id + '/builds/search/' + $window.location.search);
-      }
     }
   };
 });

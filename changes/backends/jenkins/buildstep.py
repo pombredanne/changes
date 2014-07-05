@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 
+import logging
+
 from datetime import datetime, timedelta
 from flask import current_app
 
@@ -12,11 +14,25 @@ from .generic_builder import JenkinsGenericBuilder
 
 
 class JenkinsBuildStep(BuildStep):
-    def __init__(self, job_name=None):
+    builder_cls = JenkinsBuilder
+    logger = logging.getLogger('jenkins')
+
+    def __init__(self, job_name=None, jenkins_url=None, token=None, auth=None):
         self.job_name = job_name
+        self.jenkins_url = jenkins_url
+        self.token = token
+        self.auth = auth
 
     def get_builder(self, app=current_app):
-        return JenkinsBuilder(app=app, job_name=self.job_name)
+        return self.builder_cls(app=app, **self.get_builder_options())
+
+    def get_builder_options(self):
+        return {
+            'base_url': self.jenkins_url,
+            'token': self.token,
+            'auth': self.auth,
+            'job_name': self.job_name,
+        }
 
     def get_label(self):
         return 'Execute job "{0}" on Jenkins'.format(self.job_name)
@@ -50,30 +66,35 @@ class JenkinsBuildStep(BuildStep):
 
 
 class JenkinsFactoryBuildStep(JenkinsBuildStep):
-    def __init__(self, job_name=None, downstream_job_names=()):
-        self.job_name = job_name
-        self.downstream_job_names = downstream_job_names
+    builder_cls = JenkinsFactoryBuilder
 
-    def get_builder(self, app=current_app):
-        return JenkinsFactoryBuilder(
-            app=app,
-            job_name=self.job_name,
-            downstream_job_names=self.downstream_job_names,
-        )
+    def __init__(self, downstream_job_names=(), **kwargs):
+        self.downstream_job_names = downstream_job_names
+        super(JenkinsFactoryBuildStep, self).__init__(**kwargs)
+
+    def get_builder_options(self):
+        options = super(JenkinsFactoryBuildStep, self).get_builder_options()
+        options['downstream_job_names'] = self.downstream_job_names
+        return options
 
 
 class JenkinsGenericBuildStep(JenkinsBuildStep):
-    def __init__(self, job_name, script, cluster, path=''):
-        self.job_name = job_name
+    builder_cls = JenkinsGenericBuilder
+
+    def __init__(self, job_name, script, cluster, path='', workspace='',
+                 **kwargs):
         self.script = script
         self.cluster = cluster
         self.path = path
+        self.workspace = workspace
+        super(JenkinsGenericBuildStep, self).__init__(job_name=job_name, **kwargs)
 
-    def get_builder(self, app=current_app):
-        return JenkinsGenericBuilder(
-            app=app,
-            job_name=self.job_name,
-            script=self.script,
-            cluster=self.cluster,
-            path=self.path,
-        )
+    def get_builder_options(self):
+        options = super(JenkinsGenericBuildStep, self).get_builder_options()
+        options.update({
+            'script': self.script,
+            'cluster': self.cluster,
+            'path': self.path,
+            'workspace': self.workspace,
+        })
+        return options

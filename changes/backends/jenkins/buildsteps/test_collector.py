@@ -1,7 +1,5 @@
 from __future__ import absolute_import
 
-from collections import defaultdict
-from flask import current_app
 from hashlib import md5
 from operator import itemgetter
 
@@ -10,10 +8,11 @@ from changes.backends.jenkins.buildsteps.collector import (
     JenkinsCollectorBuilder, JenkinsCollectorBuildStep
 )
 from changes.config import db
-from changes.constants import Status
+from changes.constants import Result, Status
 from changes.db.utils import get_or_create
 from changes.jobs.sync_job_step import sync_job_step
-from changes.models import JobPhase, JobStep
+from changes.models import Job, JobPhase, JobStep, TestCase
+from changes.utils.trees import build_flat_tree
 
 
 class JenkinsTestCollectorBuilder(JenkinsCollectorBuilder):
@@ -49,22 +48,14 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
     The collected tests will be sorted and partitioned evenly across a set number
     of shards with the <cmd> value being passed a space-delimited list of tests.
     """
+    builder_cls = JenkinsTestCollectorBuilder
+
     # TODO(dcramer): longer term we'd rather have this create a new phase which
     # actually executes a different BuildStep (e.g. of order + 1), but at the
     # time of writing the system only supports a single build step.
-    def __init__(self, job_name=None, script=None, cluster=None, max_shards=10):
-        self.job_name = job_name
-        self.script = script
-        self.cluster = cluster
+    def __init__(self, max_shards=10, **kwargs):
         self.max_shards = max_shards
-
-    def get_builder(self, app=current_app):
-        return JenkinsTestCollectorBuilder(
-            app=app,
-            job_name=self.job_name,
-            script=self.script,
-            cluster=self.cluster,
-        )
+        super(JenkinsTestCollectorBuildStep, self).__init__(**kwargs)
 
     def get_label(self):
         return 'Collect tests from job "{0}" on Jenkins'.format(self.job_name)
@@ -84,26 +75,49 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
         if not last_build:
             return {}, 0
 
-        response = api_client.get('/builds/{build}/tests/?per_page='.format(
-            build=last_build['id']))
+        # XXX(dcramer): ideally this would be abstractied via an API
+        job_list = db.session.query(Job.id).filter(
+            Job.build_id == last_build['id'],
+        )
 
-        results = defaultdict(int)
-        total_duration = 0
-        test_count = 0
-        for test in response:
-            results[test['name']] += test['duration']
-            results[test['package']] += test['duration']
-            total_duration += test['duration']
-            test_count += 1
+        test_durations = dict(db.session.query(
+            TestCase.name, TestCase.duration
+        ).filter(
+            TestCase.job_id.in_(job_list),
+        ))
+        test_names = []
+        total_count, total_duration = 0, 0
+        for test in test_durations:
+            test_names.append(test)
+            total_duration += test_durations[test]
+            total_count += 1
+
+        test_stats = {}
+        if test_names:
+            sep = TestCase(name=test_names[0]).sep
+            tree = build_flat_tree(test_names, sep=sep)
+            for group_name, group_tests in tree.iteritems():
+                test_stats[group_name] = sum(test_durations[t] for t in group_tests)
 
         # the build report can contain different test suites so this isnt the
         # most accurate
         if total_duration > 0:
-            avg_test_time = int(total_duration / test_count)
+            avg_test_time = int(total_duration / total_count)
         else:
             avg_test_time = 0
 
-        return results, avg_test_time
+        return test_stats, avg_test_time
+
+    def _sync_results(self, step, item):
+        super(JenkinsTestCollectorBuilder, self)._sync_results(step, item)
+
+        if step.data.get('expanded'):
+            return
+
+        artifacts = item.get('artifacts', ())
+        if not any(a['fileName'].endswith('tests.json') for a in artifacts):
+            step.result = Result.failed
+            db.session.add(step)
 
     def _expand_jobs(self, step, artifact):
         builder = self.get_builder()
@@ -117,7 +131,12 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
         test_stats, avg_test_time = self.get_test_stats(step.project)
 
         def get_test_duration(test):
-            return test_stats.get(test, avg_test_time)
+            result = test_stats.get(test)
+            if result is None:
+                if test_stats:
+                    self.logger.info('No existing duration found for test %r', test)
+                result = avg_test_time
+            return result
 
         groups = [[] for _ in range(self.max_shards)]
         weights = [0] * self.max_shards
@@ -159,6 +178,7 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
                 'cmd': job_config['cmd'],
                 'path': job_config['path'],
                 'tests': job_config['tests'],
+                'expanded': True,
                 'job_name': self.job_name,
                 'build_no': None,
             },
