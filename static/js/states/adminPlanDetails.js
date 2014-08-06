@@ -3,6 +3,12 @@
 define(['app'], function(app) {
   'use strict';
 
+  function getFormData(planData) {
+    return {
+      name: planData.name
+    };
+  }
+
   return {
     parent: 'admin_layout',
     url: 'plans/:plan_id/',
@@ -20,11 +26,6 @@ define(['app'], function(app) {
         options[key] = value;
       }
 
-      $scope.plan = planData;
-      $scope.projectList = new Collection(planData.projects);
-      $scope.stepList = new Collection(planData.steps);
-      $scope.options = options;
-
       $scope.saveStep = function(step) {
         if (step.saving === true) {
           return;
@@ -37,11 +38,22 @@ define(['app'], function(app) {
         } else {
           url = '/api/0/plans/' + planData.id + '/steps/';
         }
-        $http.post(url, angular.copy(step)).success(function(data){
+
+        var formData = {
+          implementation: step.implementation,
+          data: step.data,
+          order: step.order,
+          name: step.name,
+        };
+
+        for (var key in step.options) {
+          formData[key] = step.options[key];
+        }
+
+        $http.post(url, formData).success(function(data){
           step.showForm = false;
           $.extend(true, step, data);
         }).error(function(data){
-          console.log(data);
           flash('error', data.message);
         }).finally(function(){
           step.saving = false;
@@ -49,7 +61,15 @@ define(['app'], function(app) {
       };
 
       $scope.addStep = function() {
-        $scope.stepList.push({showForm: true, data: '{}', order: 0, name: 'Unsaved step'});
+        $scope.stepList.push({
+          showForm: true,
+          data: '{}',
+          order: 0,
+          name: 'Unsaved step',
+          implementation: '',
+          options: {
+            'build.timeout': '0'
+          }});
       };
 
       $scope.removeStep = function(step) {
@@ -96,20 +116,30 @@ define(['app'], function(app) {
         });
       };
 
-      $scope.saveOption = function(option) {
-        var value, data = {};
-
-        if (booleans[option]) {
-          value = $scope.options[option] ? '1' : '0';
-        } else {
-          value = $scope.options[option];
+      $scope.savePlanSettings = function() {
+        var options = angular.copy($scope.options);
+        for (var key in options) {
+          if (booleans[key]) {
+            options[key] = options[key] ? '1' : '0';
+          }
         }
-
-        data[option] = value;
-
-        $http.post('/api/0/plans/' + planData.id + '/options/', data);
+        // TODO(dcramer): we dont correctly update the URL when the project slug
+        // changes
+        $http.post('/api/0/plans/' + planData.id + '/options/', options);
+        $http.post('/api/0/plans/' + planData.id + '/', $scope.formData)
+          .success(function(data){
+            $.extend($scope.plan, data);
+            $scope.formData = getFormData(data);
+          });
+          // TODO(dcramer): this is actually invalid
+          $scope.planSettingsForm.$setPristine();
       };
 
+      $scope.plan = planData;
+      $scope.projectList = new Collection(planData.projects);
+      $scope.stepList = new Collection(planData.steps);
+      $scope.options = options;
+      $scope.formData = getFormData(planData);
     },
     resolve: {
       planData: function($http, $stateParams) {

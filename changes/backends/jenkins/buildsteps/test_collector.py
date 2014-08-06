@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 
+import itertools
+
 from hashlib import md5
 from operator import itemgetter
 
@@ -9,9 +11,9 @@ from changes.backends.jenkins.buildsteps.collector import (
 )
 from changes.config import db
 from changes.constants import Result, Status
-from changes.db.utils import get_or_create
+from changes.db.utils import get_or_create, try_create
 from changes.jobs.sync_job_step import sync_job_step
-from changes.models import Job, JobPhase, JobStep, TestCase
+from changes.models import FailureReason, Job, JobPhase, JobStep, TestCase
 from changes.utils.trees import build_flat_tree
 
 
@@ -60,12 +62,12 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
     def get_label(self):
         return 'Collect tests from job "{0}" on Jenkins'.format(self.job_name)
 
-    def fetch_artifact(self, step, artifact):
-        if artifact['fileName'].endswith('tests.json'):
-            self._expand_jobs(step, artifact)
+    def fetch_artifact(self, artifact, **kwargs):
+        if artifact.data['fileName'].endswith('tests.json'):
+            self._expand_jobs(artifact.step, artifact)
         else:
             builder = self.get_builder()
-            builder.sync_artifact(step, artifact)
+            builder.sync_artifact(artifact, **kwargs)
 
     def get_test_stats(self, project):
         response = api_client.get('/projects/{project}/'.format(
@@ -97,7 +99,8 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
             sep = TestCase(name=test_names[0]).sep
             tree = build_flat_tree(test_names, sep=sep)
             for group_name, group_tests in tree.iteritems():
-                test_stats[group_name] = sum(test_durations[t] for t in group_tests)
+                segments = self._normalize_test_segments(group_name)
+                test_stats[segments] = sum(test_durations[t] for t in group_tests)
 
         # the build report can contain different test suites so this isnt the
         # most accurate
@@ -119,9 +122,28 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
             step.result = Result.failed
             db.session.add(step)
 
+            job = step.job
+            try_create(FailureReason, {
+                'step_id': step.id,
+                'job_id': job.id,
+                'build_id': job.build_id,
+                'project_id': job.project_id,
+                'reason': 'missing_artifact'
+            })
+
+    def _normalize_test_segments(self, test_name):
+        sep = TestCase(name=test_name).sep
+        segments = test_name.split(sep)
+
+        # kill the file extension
+        if sep is '/' and '.' in segments[-1]:
+            segments[-1] = segments[-1].rsplit('.', 1)[0]
+
+        return tuple(segments)
+
     def _expand_jobs(self, step, artifact):
         builder = self.get_builder()
-        artifact_data = builder.fetch_artifact(step, artifact)
+        artifact_data = builder.fetch_artifact(step, artifact.data)
         phase_config = artifact_data.json()
 
         assert phase_config['cmd']
@@ -130,21 +152,24 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
 
         test_stats, avg_test_time = self.get_test_stats(step.project)
 
-        def get_test_duration(test):
-            result = test_stats.get(test)
+        def get_test_duration(test_name):
+            segments = self._normalize_test_segments(test_name)
+            result = test_stats.get(segments)
             if result is None:
                 if test_stats:
-                    self.logger.info('No existing duration found for test %r', test)
+                    self.logger.info('No existing duration found for test %r', test_name)
                 result = avg_test_time
             return result
 
-        groups = [[] for _ in range(self.max_shards)]
+        group_tests = [[] for _ in range(self.max_shards)]
+        group_weights = [0 for _ in range(self.max_shards)]
         weights = [0] * self.max_shards
         weighted_tests = [(get_test_duration(t), t) for t in phase_config['tests']]
         for weight, test in sorted(weighted_tests, reverse=True):
             low_index, _ = min(enumerate(weights), key=itemgetter(1))
             weights[low_index] += 1 + weight
-            groups[low_index].append(test)
+            group_tests[low_index].append(test)
+            group_weights[low_index] += 1 + weight
 
         phase, created = get_or_create(JobPhase, where={
             'job': step.job,
@@ -155,11 +180,12 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
         })
         db.session.commit()
 
-        for test_list in groups:
+        for test_list, weight in itertools.izip(group_tests, group_weights):
             self._expand_job(phase, {
                 'tests': test_list,
                 'cmd': phase_config['cmd'],
                 'path': phase_config.get('path', ''),
+                'weight': weight,
             })
 
     def _expand_job(self, phase, job_config):
@@ -181,6 +207,7 @@ class JenkinsTestCollectorBuildStep(JenkinsCollectorBuildStep):
                 'expanded': True,
                 'job_name': self.job_name,
                 'build_no': None,
+                'weight': job_config['weight']
             },
             'status': Status.queued,
         })

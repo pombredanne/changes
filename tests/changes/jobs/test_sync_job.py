@@ -5,7 +5,7 @@ import mock
 from changes.constants import Status
 from changes.config import db
 from changes.jobs.sync_job import sync_job
-from changes.models import ItemStat, Job, Step, Task
+from changes.models import ItemStat, Job, HistoricalImmutableStep, Task
 from changes.testutils import TestCase
 
 
@@ -30,7 +30,7 @@ class SyncJobTest(TestCase):
         self.jobplan = self.create_job_plan(self.job, self.plan)
 
     @mock.patch('changes.jobs.sync_job.queue.delay')
-    @mock.patch.object(Step, 'get_implementation')
+    @mock.patch.object(HistoricalImmutableStep, 'get_implementation')
     def test_in_progress(self, get_implementation,
                          queue_delay):
         implementation = mock.Mock()
@@ -74,7 +74,7 @@ class SyncJobTest(TestCase):
 
     @mock.patch('changes.jobs.sync_job.fire_signal')
     @mock.patch('changes.jobs.sync_job.queue.delay')
-    @mock.patch.object(Step, 'get_implementation')
+    @mock.patch.object(HistoricalImmutableStep, 'get_implementation')
     def test_finished(self, get_implementation, queue_delay,
                       mock_fire_signal):
         implementation = mock.Mock()

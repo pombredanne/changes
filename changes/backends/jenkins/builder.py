@@ -12,21 +12,21 @@ from datetime import datetime
 from flask import current_app
 from lxml import etree, objectify
 
+from changes.artifacts.coverage import CoverageHandler
+from changes.artifacts.xunit import XunitHandler
 from changes.backends.base import BaseBackend, UnrecoverableException
 from changes.config import db
 from changes.constants import Result, Status
 from changes.db.utils import create_or_update, get_or_create
 from changes.jobs.sync_artifact import sync_artifact
-from changes.jobs.sync_job_step import sync_job_step, sync_phase
+from changes.jobs.sync_job_step import sync_job_step
 from changes.models import (
     Artifact, Cluster, ClusterNode, TestResult,
-    LogSource, LogChunk, Node, JobPhase, JobStep
+    LogSource, LogChunk, Node, JobPhase, JobStep, LOG_CHUNK_SIZE
 )
-from changes.handlers.coverage import CoverageHandler
-from changes.handlers.xunit import XunitHandler
 from changes.utils.http import build_uri
+from changes.utils.text import chunked
 
-LOG_CHUNK_SIZE = 4096
 
 RESULT_MAP = {
     'SUCCESS': Result.passed,
@@ -43,26 +43,6 @@ XUNIT_FILENAMES = ('junit.xml', 'xunit.xml', 'nosetests.xml')
 COVERAGE_FILENAMES = ('coverage.xml',)
 
 ID_XML_RE = re.compile(r'<id>(\d+)</id>')
-
-
-def chunked(iterator, chunk_size):
-    """
-    Given an iterator, chunk it up into ~chunk_size, but be aware of newline
-    termination as an intended goal.
-    """
-    result = ''
-    for chunk in iterator:
-        result += chunk
-        while len(result) >= chunk_size:
-            newline_pos = result.rfind('\n', 0, chunk_size)
-            if newline_pos == -1:
-                newline_pos = chunk_size
-            else:
-                newline_pos += 1
-            yield result[:newline_pos]
-            result = result[newline_pos:]
-    if result:
-        yield result
 
 
 class NotFound(Exception):
@@ -85,12 +65,13 @@ class JenkinsBuilder(BaseBackend):
         self.sync_log_artifacts = self.app.config.get('JENKINS_SYNC_LOG_ARTIFACTS', False)
         self.sync_xunit_artifacts = self.app.config.get('JENKINS_SYNC_XUNIT_ARTIFACTS', True)
         self.sync_coverage_artifacts = self.app.config.get('JENKINS_SYNC_COVERAGE_ARTIFACTS', True)
+        self.sync_file_artifacts = self.app.config.get('JENKINS_SYNC_FILE_ARTIFACTS', True)
 
     def _get_raw_response(self, path, method='GET', params=None, **kwargs):
         url = '{}/{}'.format(self.base_url, path.lstrip('/'))
 
         kwargs.setdefault('allow_redirects', False)
-        kwargs.setdefault('timeout', 5)
+        kwargs.setdefault('timeout', 30)
         kwargs.setdefault('auth', self.auth)
 
         if params is None:
@@ -162,17 +143,30 @@ class JenkinsBuilder(BaseBackend):
 
         return step
 
-    def fetch_artifact(self, jobstep, artifact):
+    def fetch_artifact(self, jobstep, artifact_data):
         url = '{base}/job/{job}/{build}/artifact/{artifact}'.format(
             base=self.base_url,
             job=jobstep.data['job_name'],
             build=jobstep.data['build_no'],
-            artifact=artifact['relativePath'],
+            artifact=artifact_data['relativePath'],
         )
         return requests.get(url, stream=True, timeout=15)
 
-    def _sync_artifact_as_xunit(self, jobstep, artifact):
-        resp = self.fetch_artifact(jobstep, artifact)
+    def _sync_artifact_as_file(self, artifact):
+        jobstep = artifact.step
+        resp = self.fetch_artifact(jobstep, artifact.data)
+
+        step_id = jobstep.id.hex
+
+        artifact.file.save(
+            StringIO(resp.content), '{0}/{1}/{2}_{3}'.format(
+                step_id[:4], step_id[4:], artifact.id.hex, artifact.name
+            )
+        )
+
+    def _sync_artifact_as_xunit(self, artifact):
+        jobstep = artifact.step
+        resp = self.fetch_artifact(jobstep, artifact.data)
 
         # TODO(dcramer): requests doesnt seem to provide a non-binary file-like
         # API, so we're stuffing it into StringIO
@@ -186,8 +180,9 @@ class JenkinsBuilder(BaseBackend):
         else:
             db.session.commit()
 
-    def _sync_artifact_as_coverage(self, jobstep, artifact):
-        resp = self.fetch_artifact(jobstep, artifact)
+    def _sync_artifact_as_coverage(self, artifact):
+        jobstep = artifact.step
+        resp = self.fetch_artifact(jobstep, artifact.data)
 
         # TODO(dcramer): requests doesnt seem to provide a non-binary file-like
         # API, so we're stuffing it into StringIO
@@ -201,10 +196,13 @@ class JenkinsBuilder(BaseBackend):
         else:
             db.session.commit()
 
-    def _sync_artifact_as_log(self, jobstep, artifact):
-        job = jobstep.job
+    def _sync_artifact_as_log(self, artifact):
+        jobstep = artifact.step
+        job = artifact.job
+
         logsource, created = get_or_create(LogSource, where={
-            'name': artifact['displayPath'],
+            'name': artifact.data['displayPath'],
+            'job': job,
             'step': jobstep,
         }, defaults={
             'job': job,
@@ -212,12 +210,11 @@ class JenkinsBuilder(BaseBackend):
             'date_created': job.date_started,
         })
 
-        job_name = jobstep.data['job_name']
-        build_no = jobstep.data['build_no']
-
         url = '{base}/job/{job}/{build}/artifact/{artifact}'.format(
-            base=self.base_url, job=job_name,
-            build=build_no, artifact=artifact['relativePath'],
+            base=self.base_url,
+            job=jobstep.data['job_name'],
+            build=jobstep.data['build_no'],
+            artifact=artifact.data['relativePath'],
         )
 
         offset = 0
@@ -508,14 +505,12 @@ class JenkinsBuilder(BaseBackend):
             step.date_finished = datetime.utcfromtimestamp(
                 (item['timestamp'] + item['duration']) / 1000)
 
+        if step.status == Status.finished:
+            self._sync_results(step, item)
+
         if db.session.is_modified(step):
             db.session.add(step)
             db.session.commit()
-
-        if step.status != Status.finished:
-            return
-
-        self._sync_results(step, item)
 
     def _sync_results(self, step, item):
         job_name = step.data['job_name']
@@ -555,16 +550,6 @@ class JenkinsBuilder(BaseBackend):
                 step.id.hex)
 
     def _handle_generic_artifact(self, jobstep, artifact, skip_checks=False):
-        if not skip_checks:
-            if artifact['fileName'].endswith('.log') and not self.sync_log_artifacts:
-                return
-
-            if artifact['fileName'].endswith(XUNIT_FILENAMES) and not self.sync_xunit_artifacts:
-                return
-
-            if artifact['fileName'].endswith(COVERAGE_FILENAMES) and not self.sync_coverage_artifacts:
-                return
-
         artifact, created = get_or_create(Artifact, where={
             'step': jobstep,
             'name': artifact['fileName'],
@@ -580,6 +565,7 @@ class JenkinsBuilder(BaseBackend):
             artifact_id=artifact.id.hex,
             task_id=artifact.id.hex,
             parent_task_id=jobstep.id.hex,
+            skip_checks=skip_checks,
         )
 
     def _sync_phased_results(self, step, artifacts):
@@ -605,15 +591,15 @@ class JenkinsBuilder(BaseBackend):
         phases = set()
 
         # fetch each phase and create it immediately (as opposed to async)
-        for artifact in artifacts:
-            artifact_filename = artifact['fileName']
+        for artifact_data in artifacts:
+            artifact_filename = artifact_data['fileName']
 
             if not artifact_filename.endswith('phase.json'):
                 continue
 
             pending_artifacts.remove(artifact_filename)
 
-            resp = self.fetch_artifact(step, artifact)
+            resp = self.fetch_artifact(step, artifact_data)
             phase_data = resp.json()
 
             if phase_data['retcode']:
@@ -708,52 +694,47 @@ class JenkinsBuilder(BaseBackend):
         else:
             self._sync_step_from_active(step)
 
-    def sync_artifact(self, step, artifact):
-        if artifact['fileName'].endswith('.log'):
-            self._sync_artifact_as_log(step, artifact)
+    def sync_artifact(self, artifact, skip_checks=False):
+        if not skip_checks:
+            if artifact.name.endswith('.log') and not self.sync_log_artifacts:
+                return
 
-        if artifact['fileName'].endswith(XUNIT_FILENAMES):
-            self._sync_artifact_as_xunit(step, artifact)
+            elif artifact.name.endswith(XUNIT_FILENAMES) and not self.sync_xunit_artifacts:
+                return
 
-        if artifact['fileName'].endswith(COVERAGE_FILENAMES):
-            self._sync_artifact_as_coverage(step, artifact)
+            elif artifact.name.endswith(COVERAGE_FILENAMES) and not self.sync_coverage_artifacts:
+                return
+
+            elif not self.sync_file_artifacts:
+                return
+
+        if artifact.name.endswith('.log'):
+            self._sync_artifact_as_log(artifact)
+
+        elif artifact.name.endswith(XUNIT_FILENAMES):
+            self._sync_artifact_as_xunit(artifact)
+
+        elif artifact.name.endswith(COVERAGE_FILENAMES):
+            self._sync_artifact_as_coverage(artifact)
+
+        else:
+            self._sync_artifact_as_file(artifact)
 
         db.session.commit()
-
-    def cancel_job(self, job):
-        active_steps = JobStep.query.filter(
-            JobStep.job == job,
-            JobStep.status != Status.finished,
-        )
-        for step in active_steps:
-            try:
-                self.cancel_step(step)
-            except UnrecoverableException:
-                # assume the job no longer exists
-                pass
-        db.session.flush()
-
-        if active_steps:
-            for phase in JobPhase.query.filter(JobPhase.job == job):
-                sync_phase(phase)
-            db.session.flush()
-
-        job.status = Status.finished
-        job.result = Result.aborted
-        job.date_finished = datetime.utcnow()
-        db.session.add(job)
 
     def cancel_step(self, step):
         if step.data.get('build_no'):
             url = '/job/{}/{}/stop/'.format(
                 step.data['job_name'], step.data['build_no'])
+            method = 'GET'
         else:
             url = '/queue/cancelItem?id={}'.format(step.data['item_id'])
+            method = 'POST'
 
         try:
-            self._get_raw_response(url)
+            self._get_raw_response(url, method=method)
         except NotFound:
-            raise UnrecoverableException('Unable to find job in Jenkins')
+            pass
 
         step.status = Status.finished
         step.result = Result.aborted

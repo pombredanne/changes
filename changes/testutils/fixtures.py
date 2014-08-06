@@ -1,4 +1,5 @@
 from __future__ import absolute_import
+from changes.models.latest_green_build import LatestGreenBuild
 
 __all__ = ('Fixtures', 'SAMPLE_COVERAGE', 'SAMPLE_DIFF', 'SAMPLE_XUNIT')
 
@@ -10,7 +11,7 @@ from changes.models import (
     Repository, Job, JobPlan, Project, Revision, Change, Author,
     Patch, Plan, Step, Build, Source, Node, JobPhase, JobStep, Task,
     Artifact, TestCase, LogChunk, LogSource, Cluster, ClusterNode,
-    RepositoryStatus
+    RepositoryStatus, User, ItemOption, Command
 )
 from changes.utils.slugs import slugify
 
@@ -163,16 +164,11 @@ class Fixtures(object):
         return job
 
     def create_job_plan(self, job, plan):
-        job_plan = JobPlan(
-            project_id=job.project_id,
-            build_id=job.build_id,
-            plan_id=plan.id,
-            job_id=job.id,
-        )
-        db.session.add(job_plan)
+        jobplan = JobPlan.build_jobplan(plan, job)
+        db.session.add(jobplan)
         db.session.commit()
 
-        return job_plan
+        return jobplan
 
     def create_source(self, project, **kwargs):
         if 'revision_sha' not in kwargs:
@@ -308,6 +304,19 @@ class Fixtures(object):
 
         return step
 
+    def create_command(self, jobstep, **kwargs):
+        kwargs.setdefault('label', 'a command')
+        kwargs.setdefault('script', 'echo 1')
+
+        command = Command(
+            jobstep=jobstep,
+            **kwargs
+        )
+        db.session.add(command)
+        db.session.commit()
+
+        return command
+
     def create_task(self, **kwargs):
         kwargs.setdefault('task_id', uuid4())
 
@@ -317,11 +326,12 @@ class Fixtures(object):
 
         return task
 
-    def create_artifact(self, step, **kwargs):
+    def create_artifact(self, step, name, **kwargs):
         artifact = Artifact(
             step=step,
             project=step.project,
             job=step.job,
+            name=name,
             **kwargs
         )
         db.session.add(artifact)
@@ -362,3 +372,26 @@ class Fixtures(object):
         db.session.commit()
 
         return logchunk
+
+    def create_user(self, email, **kwargs):
+        user = User(email=email, **kwargs)
+        db.session.add(user)
+        db.session.commit()
+        return user
+
+    def create_option(self, **kwargs):
+        option = ItemOption(**kwargs)
+        db.session.add(option)
+        db.session.commit()
+        return option
+
+    def create_latest_green_build(self, **kwargs):
+        if not kwargs.get('project'):
+            kwargs['project'] = self.create_repo()
+        kwargs['project_id'] = kwargs['project'].id
+
+        latest_green_build = LatestGreenBuild(**kwargs)
+        db.session.add(latest_green_build)
+        db.session.commit()
+
+        return latest_green_build

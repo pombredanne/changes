@@ -44,12 +44,16 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
             'item_id': 13,
             'job_name': 'server',
         })
-        artifact = {'fileName': 'junit.xml'}
+        artifact = self.create_artifact(
+            step=step,
+            name='junit.xml',
+            data={'fileName': 'junit.xml'},
+        )
 
         buildstep = self.get_buildstep()
-        buildstep.fetch_artifact(step, artifact)
+        buildstep.fetch_artifact(artifact)
 
-        builder.sync_artifact.assert_called_once_with(step, artifact)
+        builder.sync_artifact.assert_called_once_with(artifact)
 
     def test_get_test_stats(self):
         project = self.create_project()
@@ -68,9 +72,9 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
 
         assert avg_time == 37
 
-        assert results['foo.bar'] == 75
-        assert results['foo.bar.test_baz'] == 50
-        assert results['foo.bar.test_bar'] == 25
+        assert results[('foo', 'bar')] == 75
+        assert results[('foo', 'bar', 'test_baz')] == 50
+        assert results[('foo', 'bar', 'test_bar')] == 25
 
     @responses.activate
     @mock.patch.object(JenkinsTestCollectorBuildStep, 'get_builder')
@@ -86,8 +90,8 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
             'phase': 'Test',
             'cmd': 'py.test --junit=junit.xml {test_names}',
             'tests': [
-                'foo.bar.test_baz',
-                'foo.bar.test_bar',
+                'foo/bar.py',
+                'foo/baz.py',
                 'foo.bar.test_biz',
                 'foo.bar.test_buz',
             ],
@@ -99,11 +103,10 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
 
         get_builder.return_value = builder
         get_test_stats.return_value = {
-            'foo.bar.test_baz': 50,
-            'foo.bar.test_bar': 15,
-            'foo.bar.test_biz': 10,
-            'foo.bar.test_buz': 200,
-            'foo.bar': 275,
+            ('foo', 'bar'): 50,
+            ('foo', 'baz'): 15,
+            ('foo', 'bar', 'test_biz'): 10,
+            ('foo', 'bar', 'test_buz'): 200,
         }, 68
 
         project = self.create_project()
@@ -117,12 +120,15 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
             'item_id': 13,
             'job_name': 'server',
         })
-        artifact = {
-            'fileName': 'tests.json',
-        }
+
+        artifact = self.create_artifact(
+            step=step,
+            name='tests.json',
+            data={'fileName': 'tests.json'},
+        )
 
         buildstep = self.get_buildstep()
-        buildstep.fetch_artifact(step, artifact)
+        buildstep.fetch_artifact(artifact)
 
         phase2 = JobPhase.query.filter(
             JobPhase.job_id == job.id,
@@ -138,27 +144,29 @@ class JenkinsTestCollectorBuildStepTest(TestCase):
         ), key=lambda x: x.date_created)
 
         assert len(new_steps) == 2
-        assert new_steps[0].label == '790ed83d37c20fd5178ddb4f20242ef6'
-        assert new_steps[0].data == {
-            'expanded': True,
-            'build_no': 23,
-            'job_name': 'foo-bar',
-            'tests': ['foo.bar.test_buz'],
-            'path': '',
-            'cmd': 'py.test --junit=junit.xml {test_names}',
-        }
+        # assert new_steps[0].label == '790ed83d37c20fd5178ddb4f20242ef6'
+        assert new_steps[0].data['expanded'] is True
+        assert new_steps[0].data['build_no'] == 23
+        assert new_steps[0].data['job_name'] == 'foo-bar'
+        assert new_steps[0].data['tests'] == ['foo.bar.test_buz']
+        assert new_steps[0].data['path'] == ''
+        assert new_steps[0].data['cmd'] == 'py.test --junit=junit.xml {test_names}'
+        assert new_steps[0].data['weight'] == 201
 
-        assert new_steps[1].label == '4984ae5173fdb4166e5454d2494a106d'
-        assert new_steps[1].data == {
-            'expanded': True,
-            'build_no': 23,
-            'job_name': 'foo-bar',
-            'tests': ['foo.bar.test_baz', 'foo.bar.test_bar', 'foo.bar.test_biz'],
-            'path': '',
-            'cmd': 'py.test --junit=junit.xml {test_names}',
-        }
+        # assert new_steps[1].label == '4984ae5173fdb4166e5454d2494a106d'
+        assert new_steps[1].data['expanded'] is True
+        assert new_steps[1].data['build_no'] == 23
+        assert new_steps[1].data['job_name'] == 'foo-bar'
+        assert new_steps[1].data['tests'] == [
+            'foo/bar.py',
+            'foo/baz.py',
+            'foo.bar.test_biz',
+        ]
+        assert new_steps[1].data['path'] == ''
+        assert new_steps[1].data['cmd'] == 'py.test --junit=junit.xml {test_names}'
+        assert new_steps[1].data['weight'] == 78
 
-        builder.fetch_artifact.assert_called_once_with(step, artifact)
+        builder.fetch_artifact.assert_called_once_with(artifact.step, artifact.data)
         builder.create_job_from_params.assert_any_call(
             job_name='foo-bar',
             target_id=new_steps[0].id.hex,

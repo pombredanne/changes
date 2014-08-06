@@ -150,6 +150,9 @@ def create_app(_read_config=True, **config):
         ('changes.listeners.build_revision.revision_created_handler', 'revision.created'),
     )
 
+    # restrict outbound notifications to the given domains
+    app.config['MAIL_DOMAIN_WHITELIST'] = ()
+
     app.config['DEBUG_TB_ENABLED'] = True
 
     # celerybeat must be running for our cleanup tasks to execute
@@ -184,8 +187,13 @@ def create_app(_read_config=True, **config):
 
     app.config['REPO_ROOT'] = None
 
+    app.config['DEFAULT_FILE_STORAGE'] = 'changes.storage.s3.S3FileStorage'
+    app.config['S3_ACCESS_KEY'] = None
+    app.config['S3_SECRET_KEY'] = None
+    app.config['S3_BUCKET'] = None
+
     app.config['MAIL_DEFAULT_SENDER'] = 'changes@localhost'
-    app.config['BASE_URI'] = None
+    app.config['BASE_URI'] = 'http://localhost:5000'
 
     app.config.update(config)
 
@@ -280,9 +288,15 @@ def configure_api_routes(app):
     from changes.api.cluster_details import ClusterDetailsAPIView
     from changes.api.cluster_index import ClusterIndexAPIView
     from changes.api.cluster_nodes import ClusterNodesAPIView
+    from changes.api.command_details import CommandDetailsAPIView
     from changes.api.job_details import JobDetailsAPIView
     from changes.api.job_log_details import JobLogDetailsAPIView
     from changes.api.jobphase_index import JobPhaseIndexAPIView
+    from changes.api.jobstep_allocate import JobStepAllocateAPIView
+    from changes.api.jobstep_artifacts import JobStepArtifactsAPIView
+    from changes.api.jobstep_deallocate import JobStepDeallocateAPIView
+    from changes.api.jobstep_details import JobStepDetailsAPIView
+    from changes.api.jobstep_log_append import JobStepLogAppendAPIView
     from changes.api.node_details import NodeDetailsAPIView
     from changes.api.node_index import NodeIndexAPIView
     from changes.api.node_job_index import NodeJobIndexAPIView
@@ -312,9 +326,12 @@ def configure_api_routes(app):
     from changes.api.repository_details import RepositoryDetailsAPIView
     from changes.api.repository_index import RepositoryIndexAPIView
     from changes.api.step_details import StepDetailsAPIView
+    from changes.api.system_options import SystemOptionsAPIView
     from changes.api.task_details import TaskDetailsAPIView
     from changes.api.task_index import TaskIndexAPIView
     from changes.api.testcase_details import TestCaseDetailsAPIView
+    from changes.api.user_details import UserDetailsAPIView
+    from changes.api.user_index import UserIndexAPIView
 
     api.add_resource(AuthIndexAPIView, '/auth/')
     api.add_resource(BuildIndexAPIView, '/builds/')
@@ -333,9 +350,15 @@ def configure_api_routes(app):
     api.add_resource(ClusterIndexAPIView, '/clusters/')
     api.add_resource(ClusterDetailsAPIView, '/clusters/<uuid:cluster_id>/')
     api.add_resource(ClusterNodesAPIView, '/clusters/<uuid:cluster_id>/nodes/')
+    api.add_resource(CommandDetailsAPIView, '/commands/<uuid:command_id>/')
     api.add_resource(JobDetailsAPIView, '/jobs/<uuid:job_id>/')
     api.add_resource(JobLogDetailsAPIView, '/jobs/<uuid:job_id>/logs/<uuid:source_id>/')
     api.add_resource(JobPhaseIndexAPIView, '/jobs/<uuid:job_id>/phases/')
+    api.add_resource(JobStepAllocateAPIView, '/jobsteps/allocate/')
+    api.add_resource(JobStepDetailsAPIView, '/jobsteps/<uuid:step_id>/')
+    api.add_resource(JobStepArtifactsAPIView, '/jobsteps/<uuid:step_id>/artifacts/')
+    api.add_resource(JobStepDeallocateAPIView, '/jobsteps/<uuid:step_id>/deallocate/')
+    api.add_resource(JobStepLogAppendAPIView, '/jobsteps/<uuid:step_id>/logappend/')
     api.add_resource(ChangeIndexAPIView, '/changes/')
     api.add_resource(ChangeDetailsAPIView, '/changes/<uuid:change_id>/')
     api.add_resource(NodeDetailsAPIView, '/nodes/<uuid:node_id>/')
@@ -367,9 +390,12 @@ def configure_api_routes(app):
     api.add_resource(RepositoryIndexAPIView, '/repositories/')
     api.add_resource(RepositoryDetailsAPIView, '/repositories/<uuid:repository_id>/')
     api.add_resource(StepDetailsAPIView, '/steps/<uuid:step_id>/')
+    api.add_resource(SystemOptionsAPIView, '/systemoptions/')
     api.add_resource(TestCaseDetailsAPIView, '/tests/<uuid:test_id>/')
     api.add_resource(TaskIndexAPIView, '/tasks/')
     api.add_resource(TaskDetailsAPIView, '/tasks/<uuid:task_id>/')
+    api.add_resource(UserIndexAPIView, '/users/')
+    api.add_resource(UserDetailsAPIView, '/users/<uuid:user_id>/')
 
 
 def configure_web_routes(app):
@@ -418,6 +444,7 @@ def configure_jobs(app):
     from changes.jobs.check_repos import check_repos
     from changes.jobs.cleanup_tasks import cleanup_tasks
     from changes.jobs.create_job import create_job
+    from changes.jobs.import_repo import import_repo
     from changes.jobs.signals import (
         fire_signal, run_event_listener
     )
@@ -433,6 +460,7 @@ def configure_jobs(app):
     queue.register('cleanup_tasks', cleanup_tasks)
     queue.register('create_job', create_job)
     queue.register('fire_signal', fire_signal)
+    queue.register('import_repo', import_repo)
     queue.register('run_event_listener', run_event_listener)
     queue.register('sync_artifact', sync_artifact)
     queue.register('sync_build', sync_build)

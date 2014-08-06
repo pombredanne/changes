@@ -3,8 +3,26 @@ import mock
 from changes.config import db
 from changes.constants import Result
 from changes.models import ProjectOption, ItemOption
-from changes.listeners.mail import MailNotificationHandler
+from changes.listeners.mail import filter_recipients, MailNotificationHandler
 from changes.testutils.cases import TestCase
+
+
+class FilterRecipientsTestCase(TestCase):
+    def test_simple(self):
+        results = filter_recipients(
+            ['foo@example.com', 'bar@localhost'], ['example.com'])
+
+        assert results == ['foo@example.com']
+
+        results = filter_recipients(
+            ['foo@example.com', 'bar@localhost'], ['example.com', 'localhost'])
+
+        assert results == ['foo@example.com', 'bar@localhost']
+
+        results = filter_recipients(
+            ['Foo Bar <foo@example.com>'], ['example.com'])
+
+        assert results == ['Foo Bar <foo@example.com>']
 
 
 class GetRecipientsTestCase(TestCase):
@@ -197,7 +215,6 @@ class GetJobOptionsTestCase(TestCase):
         plan.projects.append(project)
         build = self.create_build(project)
         job = self.create_job(build)
-        self.create_job_plan(job, plan)
 
         db.session.add(ItemOption(
             item_id=plan.id,
@@ -216,6 +233,10 @@ class GetJobOptionsTestCase(TestCase):
             name='mail.notify-addresses',
             value='foo@example.com',
         ))
+        db.session.flush()
+
+        self.create_job_plan(job, plan)
+
         db.session.commit()
 
         handler = MailNotificationHandler()

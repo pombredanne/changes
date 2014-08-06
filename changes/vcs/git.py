@@ -4,12 +4,48 @@ from datetime import datetime
 from urlparse import urlparse
 
 from changes.utils.cache import memoize
+from changes.utils.http import build_uri
 
-from .base import Vcs, RevisionResult, BufferParser
+from .base import Vcs, RevisionResult, BufferParser, CommandError
 
 LOG_FORMAT = '%H\x01%an <%ae>\x01%at\x01%cn <%ce>\x01%ct\x01%P\x01%B\x02'
 
 ORIGIN_PREFIX = 'remotes/origin/'
+
+BASH_CLONE_STEP = """
+#!/bin/bash -eux
+
+REMOTE_URL=%(remote_url)s
+LOCAL_PATH=%(local_path)s
+REVISION=%(revision)s
+
+if [ ! -d $LOCAL_PATH/.git ]; then
+    git clone $REMOTE_URL $LOCAL_PATH
+    pushd $LOCAL_PATH
+else
+    pushd $LOCAL_PATH && git fetch --all
+    git remote prune origin
+fi
+
+git clean -fdx
+
+if ! git reset --hard $REVISION ; then
+    git reset --hard origin/master
+    echo "Failed to update to $REVISION, falling back to master"
+fi
+""".strip()
+
+BASH_PATCH_STEP = """
+#!/bin/bash -eux
+
+LOCAL_PATH=%(local_path)s
+PATCH_URL=%(patch_url)s
+
+pushd $LOCAL_PATH
+PATCH_PATH=/tmp/$(mktemp patch.XXXXXXXXXX)
+curl -o $PATCH_PATH $PATCH_URL
+git apply $PATCH_PATH
+""".strip()
 
 
 class LazyGitRevisionResult(RevisionResult):
@@ -108,3 +144,25 @@ class GitVcs(Vcs):
         cmd = ['log', '-n 1', '-p', '--pretty="%b"', id]
         result = self.run(cmd)[4:]
         return result
+
+    def is_child_parent(self, child_in_question, parent_in_question):
+        cmd = ['merge-base', '--is-ancestor', parent_in_question, child_in_question]
+        try:
+            self.run(cmd)
+            return True
+        except CommandError:
+            return False
+
+    def get_buildstep_clone(self, source, workspace):
+        return BASH_CLONE_STEP % dict(
+            remote_url=self.remote_url,
+            local_path=workspace,
+            revision=source.revision_sha,
+        )
+
+    def get_buildstep_patch(self, source, workspace):
+        return BASH_PATCH_STEP % dict(
+            local_path=workspace,
+            patch_url=build_uri('/api/0/patches/{0}/?raw=1'.format(
+                                source.patch_id.hex)),
+        )

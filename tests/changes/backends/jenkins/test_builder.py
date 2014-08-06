@@ -15,7 +15,7 @@ from changes.constants import Status, Result
 from changes.models import (
     Artifact, TestCase, Patch, LogSource, LogChunk, Job, JobPhase, FileCoverage
 )
-from changes.backends.jenkins.builder import JenkinsBuilder, chunked
+from changes.backends.jenkins.builder import JenkinsBuilder
 from changes.testutils import (
     BackendTestCase, eager_tasks, SAMPLE_DIFF, SAMPLE_XUNIT, SAMPLE_COVERAGE
 )
@@ -154,36 +154,11 @@ class CreateBuildTest(BaseTestCase):
         builder.create_job(job)
 
 
-class CancelJobTest(BaseTestCase):
-    @mock.patch.object(JenkinsBuilder, 'cancel_step')
-    def test_simple(self, cancel_step):
-        build = self.create_build(self.project)
-        job = self.create_job(
-            build=build,
-            id=UUID('81d1596fd4d642f4a6bdf86c45e014e8'),
-        )
-        phase = self.create_jobphase(job)
-        step1 = self.create_jobstep(phase, data={
-            'item_id': 1,
-            'job_name': 'server',
-        }, status=Status.queued)
-
-        self.create_jobstep(phase, data={
-            'item_id': 2,
-            'job_name': 'server',
-        }, status=Status.finished)
-
-        builder = self.get_builder()
-        builder.cancel_job(job)
-
-        cancel_step.assert_called_once_with(step1)
-
-
 class CancelStepTest(BaseTestCase):
     @responses.activate
     def test_queued(self):
         responses.add(
-            responses.GET, 'http://jenkins.example.com/queue/cancelItem?id=13',
+            responses.POST, 'http://jenkins.example.com/queue/cancelItem?id=13',
             match_querystring=True, status=302)
 
         build = self.create_build(self.project)
@@ -479,7 +454,8 @@ class SyncGenericResultsTest(BaseTestCase):
         sync_artifact.delay_if_needed.assert_any_call(
             artifact_id=log_artifact.id.hex,
             task_id=log_artifact.id.hex,
-            parent_task_id=step.id.hex
+            parent_task_id=step.id.hex,
+            skip_checks=False,
         )
 
         xunit_artifact = Artifact.query.filter(
@@ -496,7 +472,8 @@ class SyncGenericResultsTest(BaseTestCase):
         sync_artifact.delay_if_needed.assert_any_call(
             artifact_id=xunit_artifact.id.hex,
             task_id=xunit_artifact.id.hex,
-            parent_task_id=step.id.hex
+            parent_task_id=step.id.hex,
+            skip_checks=False,
         )
 
 
@@ -622,12 +599,13 @@ class SyncArtifactTest(BaseTestCase):
         phase = self.create_jobphase(job)
         step = self.create_jobstep(phase, data=job.data)
 
-        builder = self.get_builder()
-        builder.sync_artifact(step, {
+        artifact = self.create_artifact(step, name='foobar.log', data={
             "displayPath": "foobar.log",
             "fileName": "foobar.log",
             "relativePath": "artifacts/foobar.log"
         })
+        builder = self.get_builder()
+        builder.sync_artifact(artifact)
 
         source = LogSource.query.filter(
             LogSource.job_id == job.id,
@@ -667,13 +645,14 @@ class SyncArtifactTest(BaseTestCase):
         )
         phase = self.create_jobphase(job)
         step = self.create_jobstep(phase, data=job.data)
-
-        builder = self.get_builder()
-        builder.sync_artifact(step, {
+        artifact = self.create_artifact(step, name='xunit.xml', data={
             "displayPath": "xunit.xml",
             "fileName": "xunit.xml",
             "relativePath": "artifacts/xunit.xml"
         })
+
+        builder = self.get_builder()
+        builder.sync_artifact(artifact)
 
         test_list = list(TestCase.query.filter(
             TestCase.job_id == job.id
@@ -702,12 +681,14 @@ class SyncArtifactTest(BaseTestCase):
         phase = self.create_jobphase(job)
         step = self.create_jobstep(phase, data=job.data)
 
-        builder = self.get_builder()
-        builder.sync_artifact(step, {
+        artifact = self.create_artifact(step, name='coverage.xml', data={
             "displayPath": "coverage.xml",
             "fileName": "coverage.xml",
             "relativePath": "artifacts/coverage.xml"
         })
+
+        builder = self.get_builder()
+        builder.sync_artifact(artifact)
 
         cover_list = list(FileCoverage.query.filter(
             FileCoverage.job_id == job.id
@@ -715,40 +696,35 @@ class SyncArtifactTest(BaseTestCase):
 
         assert len(cover_list) == 2
 
+    @responses.activate
+    def test_sync_artifact_as_file(self):
+        responses.add(
+            responses.GET, 'http://jenkins.example.com/job/server/2/artifact/artifacts/foo.bar',
+            body=SAMPLE_COVERAGE,
+            stream=True)
 
-class ChunkedTest(BaseTestCase):
-    def test_simple(self):
-        foo = 'aaa\naaa\naaa\n'
+        build = self.create_build(self.project)
+        job = self.create_job(
+            build=build,
+            id=UUID('81d1596fd4d642f4a6bdf86c45e014e8'),
+            data={
+                'build_no': 2,
+                'item_id': 13,
+                'job_name': 'server',
+                'queued': False,
+            },
+        )
+        phase = self.create_jobphase(job)
+        step = self.create_jobstep(phase, data=job.data)
 
-        result = list(chunked(foo, 5))
-        assert len(result) == 3
-        assert result[0] == 'aaa\n'
-        assert result[1] == 'aaa\n'
-        assert result[2] == 'aaa\n'
+        artifact = self.create_artifact(step, name='foo.bar', data={
+            "displayPath": "foo.bar",
+            "fileName": "foo.bar",
+            "relativePath": "artifacts/foo.bar"
+        })
 
-        result = list(chunked(foo, 8))
-
-        assert len(result) == 2
-        assert result[0] == 'aaa\naaa\n'
-        assert result[1] == 'aaa\n'
-
-        result = list(chunked(foo, 4))
-
-        assert len(result) == 3
-        assert result[0] == 'aaa\n'
-        assert result[1] == 'aaa\n'
-        assert result[2] == 'aaa\n'
-
-        foo = 'a' * 10
-
-        result = list(chunked(foo, 2))
-        assert len(result) == 5
-        assert all(r == 'aa' for r in result)
-
-        foo = 'aaaa\naaaa'
-
-        result = list(chunked(foo, 3))
-        assert len(result) == 4
+        builder = self.get_builder()
+        builder.sync_artifact(artifact)
 
 
 class JenkinsIntegrationTest(BaseTestCase):
@@ -758,7 +734,7 @@ class JenkinsIntegrationTest(BaseTestCase):
     """
     # it's possible for this test to infinitely hang due to continuous polling,
     # so let's ensure we set a timeout
-    @pytest.mark.timeout(1)
+    @pytest.mark.timeout(5)
     @mock.patch('changes.config.redis.lock', mock.MagicMock())
     @eager_tasks
     @responses.activate

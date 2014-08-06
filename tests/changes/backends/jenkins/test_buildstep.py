@@ -68,6 +68,27 @@ class JenkinsBuildStepTest(TestCase):
         builder.sync_step.assert_called_once_with(step)
 
     @mock.patch.object(JenkinsBuildStep, 'get_builder')
+    def test_cancel_step(self, get_builder):
+        builder = mock.Mock()
+        get_builder.return_value = builder
+
+        build = self.create_build(self.create_project())
+        job = self.create_job(build, data={
+            'job_name': 'server',
+            'build_no': '35',
+        })
+        phase = self.create_jobphase(job)
+        step = self.create_jobstep(phase, data={
+            'item_id': 13,
+            'job_name': 'server',
+        })
+
+        buildstep = self.get_buildstep()
+        buildstep.cancel_step(step)
+
+        builder.cancel_step.assert_called_once_with(step)
+
+    @mock.patch.object(JenkinsBuildStep, 'get_builder')
     def test_fetch_artifact(self, get_builder):
         builder = mock.Mock()
         get_builder.return_value = builder
@@ -82,9 +103,9 @@ class JenkinsBuildStepTest(TestCase):
             'item_id': 13,
             'job_name': 'server',
         })
-        artifact = {'foo': 'bar'}
+        artifact = self.create_artifact(step, name='foo.log')
 
         buildstep = self.get_buildstep()
-        buildstep.fetch_artifact(step, artifact)
+        buildstep.fetch_artifact(artifact)
 
-        builder.sync_artifact.assert_called_once_with(step, artifact)
+        builder.sync_artifact.assert_called_once_with(artifact)

@@ -19,7 +19,13 @@ class JobLogDetailsAPIView(APIView):
             return '', 404
 
         offset = int(request.args.get('offset', -1))
-        limit = int(request.args.get('limit', LOG_BATCH_SIZE))
+        limit = int(request.args.get('limit', -1))
+        raw = request.args.get('raw')
+
+        if raw and limit == -1:
+            limit = 0
+        elif limit == -1:
+            limit = LOG_BATCH_SIZE
 
         queryset = LogChunk.query.filter(
             LogChunk.source_id == source.id,
@@ -53,6 +59,9 @@ class JobLogDetailsAPIView(APIView):
             next_offset = logchunks[-1].offset + logchunks[-1].size
         else:
             next_offset = 0
+
+        if raw:
+            return Response(''.join(l.text for l in logchunks), mimetype='text/plain')
 
         context = self.serialize({
             'source': source,

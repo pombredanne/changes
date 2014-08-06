@@ -2,7 +2,8 @@ from __future__ import absolute_import, print_function
 
 import toronado
 
-from flask import render_template
+from email.utils import parseaddr
+from flask import current_app, render_template
 from flask_mail import Message, sanitize_address
 from jinja2 import Markup
 
@@ -11,8 +12,21 @@ from changes.config import db, mail
 from changes.constants import Result
 from changes.db.utils import try_create
 from changes.listeners.notification_base import NotificationHandler
-from changes.models import Event, EventType, JobPlan, ProjectOption, ItemOption
+from changes.models import Event, EventType, JobPlan, ProjectOption
 from changes.utils.http import build_uri
+
+
+def filter_recipients(email_list, domain_whitelist=None):
+    if domain_whitelist is None:
+        domain_whitelist = current_app.config['MAIL_DOMAIN_WHITELIST']
+
+    if not domain_whitelist:
+        return email_list
+
+    return [
+        e for e in email_list
+        if parseaddr(e)[1].split('@', 1)[-1] in domain_whitelist
+    ]
 
 
 class MailNotificationHandler(NotificationHandler):
@@ -77,7 +91,7 @@ class MailNotificationHandler(NotificationHandler):
 
     def send(self, job, parent=None):
         # TODO(dcramer): we should send a clipping of a relevant job log
-        recipients = self.get_recipients(job)
+        recipients = filter_recipients(self.get_recipients(job))
         if not recipients:
             return
 
@@ -122,20 +136,12 @@ class MailNotificationHandler(NotificationHandler):
         )
 
         # if a plan was specified, it's options override the project's
-        job_plan = JobPlan.query.filter(
+        # TODO(dcramer): this should use snapshots of options
+        jobplan = JobPlan.query.filter(
             JobPlan.job_id == job.id,
         ).first()
-        if job_plan:
-            plan_options = db.session.query(
-                ItemOption.name, ItemOption.value
-            ).filter(
-                ItemOption.item_id == job_plan.plan_id,
-                ItemOption.name.in_(option_names),
-            )
-            # determine plan options
-            for key, value in plan_options:
-                options[key] = value
-
+        if jobplan and 'snapshot' in jobplan.data:
+            options.update(jobplan.data['snapshot']['options'])
         return options
 
     def get_recipients(self, job):

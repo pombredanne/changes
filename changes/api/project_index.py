@@ -6,7 +6,7 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.sql import func
 
 from changes.api.base import APIView
-from changes.api.auth import requires_auth
+from changes.api.auth import requires_admin
 from changes.config import db
 from changes.constants import Result, Status, ProjectStatus
 from changes.models import Project, Repository, Build, Source
@@ -25,6 +25,7 @@ def get_latest_builds_query(project_list, result=None):
     ).filter(
         Source.patch_id == None,  # NOQA
         Build.status == Status.finished,
+        Build.result.in_([Result.passed, Result.failed]),
     ).order_by(
         Build.date_created.desc(),
     )
@@ -124,7 +125,7 @@ class ProjectIndexAPIView(APIView):
 
         return self.respond(context)
 
-    @requires_auth
+    @requires_admin
     def post(self):
         args = self.post_parser.parse_args()
 

@@ -7,10 +7,13 @@ define([
   'states/adminPlanDetails',
   'states/adminPlanList',
   'states/adminProjectCreate',
+  'states/adminProjectDetails',
   'states/adminProjectList',
   'states/adminRepositoryCreate',
   'states/adminRepositoryDetails',
   'states/adminRepositoryList',
+  'states/adminUserDetails',
+  'states/adminUserList',
   'states/authorBuildList',
   'states/buildDetails',
   'states/buildTestList',
@@ -29,7 +32,6 @@ define([
   'states/projectCreateBuild',
   'states/projectDetails',
   'states/projectList',
-  'states/projectSettings',
   'states/projectSourceDetails',
   'states/projectTestDetails',
   'states/projectTestList',
@@ -40,6 +42,7 @@ define([
 
   'directives/bindOnce',
   'directives/duration',
+  'directives/prettyJson',
   'directives/renderBuildRow',
   'directives/timeSince',
   'filters/escape',
@@ -55,10 +58,13 @@ define([
   AdminPlanDetailsState,
   AdminPlanListState,
   AdminProjectCreateState,
+  AdminProjectDetailsState,
   AdminProjectListState,
   AdminRepositoryCreateState,
   AdminRepositoryDetailsState,
   AdminRepositoryListState,
+  AdminUserDetailsState,
+  AdminUserListState,
   AuthorBuildListState,
   BuildDetailsState,
   BuildTestListState,
@@ -77,7 +83,6 @@ define([
   ProjectCreateBuildState,
   ProjectDetailsState,
   ProjectListState,
-  ProjectSettingsState,
   ProjectSourceDetailsState,
   ProjectTestDetailsState,
   ProjectTestListState,
@@ -141,7 +146,6 @@ define([
       .state('project_commits', ProjectCommitListState)
       .state('project_commit_details', ProjectCommitDetailsState)
       .state('project_coverage', ProjectCoverageListState)
-      .state('project_settings', ProjectSettingsState)
       .state('project_tests', ProjectTestListState)
       .state('project_test_details', ProjectTestDetailsState)
       .state('project_test_search', ProjectTestSearchState)
@@ -155,12 +159,15 @@ define([
       .state('admin_layout', AdminLayoutState)
       .state('admin_home', AdminHomeState)
       .state('admin_project_create', AdminProjectCreateState)
+      .state('admin_project_details', AdminProjectDetailsState)
       .state('admin_project_list', AdminProjectListState)
       .state('admin_plan_list', AdminPlanListState)
       .state('admin_plan_create', AdminPlanCreateState)
       .state('admin_plan_details', AdminPlanDetailsState)
       .state('admin_repository_list', AdminRepositoryListState)
       .state('admin_repository_create', AdminRepositoryCreateState)
-      .state('admin_repository_details', AdminRepositoryDetailsState);
+      .state('admin_repository_details', AdminRepositoryDetailsState)
+      .state('admin_user_list', AdminUserListState)
+      .state('admin_user_details', AdminUserDetailsState);
   });
 });

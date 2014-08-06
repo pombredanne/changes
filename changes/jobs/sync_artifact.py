@@ -1,46 +1,34 @@
 from flask import current_app
 
-from sqlalchemy.orm import subqueryload_all
-
+from changes.artifacts import manager
 from changes.backends.base import UnrecoverableException
-from changes.models import Artifact, JobPlan, Plan
+from changes.constants import Result
+from changes.models import Artifact, JobPlan
 from changes.queue.task import tracked_task
 
 
-def get_build_step(job_id):
-    job_plan = JobPlan.query.options(
-        subqueryload_all('plan.steps')
-    ).filter(
-        JobPlan.job_id == job_id,
-    ).join(Plan).first()
-    if not job_plan:
-        raise UnrecoverableException('Missing job plan for job: %s' % (job_id,))
-
-    try:
-        step = job_plan.plan.steps[0]
-    except IndexError:
-        raise UnrecoverableException('Missing steps for plan: %s' % (job_plan.plan.id))
-
-    implementation = step.get_implementation()
-    return implementation
-
-
 @tracked_task
-def sync_artifact(artifact_id=None):
-    if artifact_id:
-        artifact = Artifact.query.get(artifact_id)
-
+def sync_artifact(artifact_id=None, **kwargs):
+    artifact = Artifact.query.get(artifact_id)
     if artifact is None:
         return
 
     step = artifact.step
-    data = artifact.data
 
-    try:
-        implementation = get_build_step(step.job_id)
-        implementation.fetch_artifact(step=step, artifact=data)
+    if step.result == Result.aborted:
+        return
 
-    except UnrecoverableException:
-        current_app.logger.exception(
-            'Unrecoverable exception fetching artifact %s: %s',
-            step.id, artifact)
+    # TODO(dcramer): we eventually want to abstract the entirety of Jenkins
+    # artifact syncing so that we pull files and then process them
+    if artifact.file:
+        manager.process(artifact)
+    else:
+        jobplan, implementation = JobPlan.get_build_step_for_job(job_id=step.job_id)
+
+        try:
+            implementation.fetch_artifact(artifact=artifact, **kwargs)
+
+        except UnrecoverableException:
+            current_app.logger.exception(
+                'Unrecoverable exception fetching artifact %s: %s',
+                artifact.step_id, artifact)

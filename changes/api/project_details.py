@@ -5,10 +5,12 @@ from flask.ext.restful import reqparse
 from sqlalchemy.orm import contains_eager, joinedload, subqueryload_all
 from sqlalchemy.sql import func
 
+from changes.api.auth import requires_admin
 from changes.api.base import APIView
 from changes.config import db
 from changes.models import (
-    Project, Plan, Build, Source, Status, Result, ProjectOption, Repository
+    Project, Plan, Build, Source, Status, Result, ProjectOption, Repository,
+    ProjectStatus
 )
 
 
@@ -24,12 +26,15 @@ OPTION_DEFAULTS = {
     'ui.show-tests': '1',
 }
 
+STATUS_CHOICES = ('active', 'inactive')
+
 
 class ProjectDetailsAPIView(APIView):
     post_parser = reqparse.RequestParser()
     post_parser.add_argument('name')
     post_parser.add_argument('slug')
     post_parser.add_argument('repository')
+    post_parser.add_argument('status', choices=STATUS_CHOICES)
 
     def _get_avg_duration(self, project, start_period, end_period):
         avg_duration = db.session.query(
@@ -154,6 +159,7 @@ class ProjectDetailsAPIView(APIView):
 
         return self.respond(data)
 
+    @requires_admin
     def post(self, project_id):
         project = Project.get(project_id)
         if project is None:
@@ -179,6 +185,11 @@ class ProjectDetailsAPIView(APIView):
             if repository is None:
                 return '{"error": "Repository with url %r does not exist"}' % (args.repository,), 400
             project.repository = repository
+
+        if args.status == 'inactive':
+            project.status = ProjectStatus.inactive
+        elif args.status == 'active':
+            project.status = ProjectStatus.active
 
         db.session.add(project)
 
